@@ -91,12 +91,13 @@ export function AddFriendSheet({
     if (!isFriend) setRequested((list) => [...list, username]);
     setJustAdded(result.id);
     onAdded();
-    // 友だちになったら、そのままDMを開く。申請中のときは開かず、案内だけ出す
-    if (isFriend) {
-      const opened = await onOpenDm(username);
-      if (!opened) setError("友だちに追加しました。トークは「トーク」タブから開けます。");
-    } else {
-      setError("フレンドリクエストを送りました。相手が許可すると、トークを開けます。");
+    const opened = await onOpenDm(username);
+    if (!opened) {
+      setError(
+        isFriend
+          ? "友だちに追加しました。トークは「トーク」タブから開けます。"
+          : "フレンドリクエストを送りました。トークは「トーク」タブから開けます。"
+      );
     }
     setBusy("");
   };

@@ -1,6 +1,7 @@
 import { config, missingSenninSettings } from "./config.js";
 import { pushEnabled } from "./push.js";
 import { IMAGE_BUCKET, sb } from "./supabase.js";
+import { tursoExecute } from "./turso.js";
 
 // サービス稼働状況（/api/status と /status の画面）。
 // 表示する値はすべて、このサーバーが実際に行った確認の結果です。固定の文言で「正常」とは出しません。
@@ -133,6 +134,13 @@ const PROBES: Record<string, Probe> = {
       detail: `応答しています（起動から ${Math.floor((Date.now() - startedAt) / 1000)} 秒）`
     })
   },
+  blob: {
+    label: "画像・ファイルの保存先（Turso）",
+    run: () =>
+      timedCheck(async () => {
+        await tursoExecute("select 1");
+      }, "問い合わせに成功しました")
+  },
   storage: {
     label: "旧画像の保存先（Supabase Storage）",
     run: () =>
@@ -195,6 +203,7 @@ const FEATURES: FeatureDef[] = [
   { id: "storage-blob", group: "基盤", name: "画像・ファイルの保存", needs: ["blob"] },
   { id: "storage-legacy", group: "基盤", name: "移行前の画像の読み込み", needs: ["storage"] },
   { id: "login", group: "アカウント", name: "ユーザー名・パスワードでログイン・新規登録", needs: ["table:sc_users", "table:sc_sessions"] },
+  { id: "login-sennin", group: "アカウント", name: "仙人アカウントでログイン", needs: ["sennin", "table:sc_sessions", "table:sc_users"] },
   { id: "profile", group: "アカウント", name: "プロフィール・ノート・アバター", needs: ["table:sc_users", "table:sc_notes", "blob"], optional: ["storage"] },
   { id: "friends", group: "友だち", name: "友だち（追加・申請・削除）", needs: ["table:sc_friends", "table:sc_friend_requests", "table:sc_users"] },
   { id: "blocks", group: "友だち", name: "ブロック", needs: ["table:sc_blocks"] },

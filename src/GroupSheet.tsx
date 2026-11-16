@@ -218,6 +218,21 @@ export function GroupSheet({
       </header>
 
       <div className="group-hero">
+        {isOwner ? (
+          <label className="profile-avatar group-avatar" aria-label="グループのアイコンを変更">
+            <Avatar
+              userId=""
+              hasAvatar={detail.hasAvatar}
+              name={detail.title}
+              size={96}
+              src={`/api/dm/${conversationId}/avatar?v=${avatarKey}`}
+            />
+            <span className="avatar-badge" aria-hidden="true">
+              <Icon name="camera" size={14} />
+            </span>
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden onChange={pickAvatar} disabled={busy} />
+          </label>
+        ) : (
           <Avatar
             userId=""
             hasAvatar={detail.hasAvatar}
@@ -225,6 +240,7 @@ export function GroupSheet({
             size={96}
             src={`/api/dm/${conversationId}/avatar?v=${avatarKey}`}
           />
+        )}
         {isOwner ? (
           <div className="inline-edit">
             <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={40} aria-label="グループ名" />

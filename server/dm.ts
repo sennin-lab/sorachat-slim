@@ -320,6 +320,30 @@ dm.post("/dm/:id", async (req, res) => {
 const addSchema = z.object({ usernames: z.array(z.string().trim().toLowerCase().regex(USERNAME)).min(1).max(20) });
 
 // グループのアイコン画像（名前の変更と同じく管理者だけ変えられる）
+dm.post("/dm/:id/avatar", upload.single("file"), async (req, res) => {
+  const id = String(req.params.id);
+  const me = await membership(id, currentUserId(res));
+  if (!me || me.role !== "owner") {
+    res.status(403).json({ error: "アイコンを変更できるのは管理者だけです。" });
+    return;
+  }
+  if (!isAllowedImage(req.file)) {
+    res.status(415).json({ error: "JPEG・PNG・WebP・GIF の画像を選んでください。" });
+    return;
+  }
+  const { data: conv, error } = await sb.from("sc_conversations").select("is_group, avatar_path").eq("id", id).maybeSingle();
+  if (error) throw error;
+  if (!conv?.is_group) {
+    res.status(400).json({ error: "グループ以外のアイコンは変更できません。" });
+    return;
+  }
+  const path = await saveImage(req.file!, `groups/${id}`);
+  const { error: updateError } = await sb.from("sc_conversations").update({ avatar_path: path }).eq("id", id);
+  if (updateError) throw updateError;
+  await removeImage(conv.avatar_path ?? null);
+  await broadcastList(id);
+  res.json({ hasAvatar: true });
+});
 
 dm.get("/dm/:id/avatar", async (req, res) => {
   const id = String(req.params.id);
@@ -568,6 +592,26 @@ dm.post("/dm/:id/messages", async (req, res) => {
   res.status(201).json(toMessage(row, [], parsed.data.clientId ?? null));
 });
 
+dm.post("/dm/:id/image", upload.single("file"), async (req, res) => {
+  const id = String(req.params.id);
+  const me = currentUserId(res);
+  if (!(await membership(id, me))) {
+    res.status(404).json({ error: "会話が見つかりません。" });
+    return;
+  }
+  if (!isAllowedImage(req.file)) {
+    res.status(415).json({ error: "JPEG・PNG・WebP・GIF の画像を選んでください。" });
+    return;
+  }
+  const replyToId = await replyFrom(id, req.body?.replyToId);
+  if (replyToId === undefined) {
+    res.status(400).json({ error: "返信先のメッセージが見つかりません。" });
+    return;
+  }
+  const path = await saveImage(req.file!, `dm/${id}`);
+  const row = await insertMessage(id, me, { kind: "image", imagePath: path }, "写真", { replyToId });
+  res.status(201).json(toMessage(row, []));
+});
 
 // スタンプ（画像とは別の種類。組み込みは builtin:ファイル名、自分のものは user:ID）
 dm.post("/dm/:id/stamp", async (req, res) => {
@@ -781,6 +825,51 @@ const gameCreateSchema = z.object({ kind: z.enum(GAME_KINDS), quizSource: quizSo
 
 
 // ミニゲームを作る（グループのトークだけ。1対1では使えない）
+dm.post("/dm/:id/game", async (req, res) => {
+  const id = String(req.params.id);
+  const me = currentUserId(res);
+  if (!(await membership(id, me))) {
+    res.status(404).json({ error: "会話が見つかりません。" });
+    return;
+  }
+  const { data: conv, error } = await sb.from("sc_conversations").select("is_group").eq("id", id).maybeSingle();
+  if (error) throw error;
+  if (conv?.is_group !== true) {
+    res.status(400).json({ error: "ミニゲームはグループのトークで遊べます。" });
+    return;
+  }
+  const parsed = gameCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "ゲームを選んでください。" });
+    return;
+  }
+  // 拡張機能として売っているゲームは、買った人だけ作れる
+  if (!(await featureAllowed(me, `game:${parsed.data.kind}`))) {
+    res.status(403).json({ error: "このミニゲームは仙人ストアの拡張機能です。ストアで購入すると遊べます。" });
+    return;
+  }
+  // クイズは、出し方（買った問題集か、senninaiが作るか）を必ず選ぶ
+  let quizSource: QuizSource | null = null;
+  if (parsed.data.kind === "quiz") {
+    const choice = parsed.data.quizSource;
+    if (!choice) {
+      res.status(400).json({ error: "クイズの問題の出し方を選んでください。" });
+      return;
+    }
+    if (choice.type === "pack") {
+      const owned = await ownedQuizPacks(me);
+      if (!owned.some((pack) => pack.id === choice.workId)) {
+        res.status(403).json({ error: "その問題集は購入していません。" });
+        return;
+      }
+      quizSource = { type: "pack", workId: choice.workId };
+    } else {
+      quizSource = { type: "ai", genre: choice.genre.trim() };
+    }
+  }
+  const row = await createGame(id, me, parsed.data.kind, quizSource);
+  res.status(201).json((await withReactions([row], me))[0]);
+});
 
 const gameActionSchema = z.object({
   action: z.enum(["join", "start", "cancel", "move", "buzz", "answer", "next", "hand", "guess"]),
@@ -791,6 +880,25 @@ const gameActionSchema = z.object({
 });
 
 // ミニゲームの操作（参加・開始・中止・プレイ）。結果は会話の全員へ届く
+dm.post("/dm/messages/:messageId/game", async (req, res) => {
+  const messageId = String(req.params.messageId);
+  const me = currentUserId(res);
+  const parsed = gameActionSchema.safeParse(req.body);
+  if (!UUID.test(messageId) || !parsed.success) {
+    res.status(400).json({ error: "その操作はできません。" });
+    return;
+  }
+  try {
+    await gameAction(messageId, me, parsed.data);
+  } catch (err) {
+    if (err instanceof GameError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
+  res.json({ ok: true });
+});
 
 // 選択肢を選ぶ／選び直す。同じ選択肢をもう一度押すと取り消す。単一選択では前の選択を外す
 dm.post("/dm/messages/:messageId/vote", async (req, res) => {
@@ -868,8 +976,8 @@ dm.post("/dm/messages/:messageId/forward", async (req, res) => {
     res.status(404).json({ error: "メッセージが見つかりません。" });
     return;
   }
-  if (source.kind === "image" || source.kind === "file" || source.kind === "poll" || source.kind === "game" || source.kind === "call") {
-    res.status(400).json({ error: "画像・ファイル・投票・ミニゲーム・通話は送信できません。" });
+  if (source.kind === "poll" || source.kind === "game" || source.kind === "call") {
+    res.status(400).json({ error: "投票・ミニゲーム・通話は送信できません。" });
     return;
   }
   const target = parsed.data.conversationId;
@@ -879,8 +987,11 @@ dm.post("/dm/messages/:messageId/forward", async (req, res) => {
   }
   // 元のメッセージは暗号化されているので、転送する前に復号する
   let content: Content = { kind: "text", body: decryptText(source.body) ?? "" };
-  // slim：画像・ファイルは転送できない（上で弾いている）
-  if (source.kind === "contact" && source.contact_user_id) {
+  if (source.kind === "image" && source.image_path) {
+    content = { kind: "image", imagePath: source.image_path };
+  } else if (source.kind === "file" && source.file_path) {
+    content = { kind: "file", filePath: source.file_path, fileName: source.file_name ?? "file", fileSize: Number(source.file_size ?? 0) };
+  } else if (source.kind === "contact" && source.contact_user_id) {
     content = { kind: "contact", contactUserId: source.contact_user_id };
   } else if (source.kind === "stamp" && (source.stamp_ref || source.body)) {
     // スタンプは本文を持たないので、スタンプの参照をそのまま転送する（古い行は正規化してから）
@@ -910,6 +1021,38 @@ function previewOf(content: Content) {
 }
 
 // ファイル添付（画像以外のすべて・20MBまで）
+dm.post("/dm/:id/file", uploadFile.single("file"), async (req, res) => {
+  const id = String(req.params.id);
+  const me = currentUserId(res);
+  if (!(await membership(id, me))) {
+    res.status(404).json({ error: "会話が見つかりません。" });
+    return;
+  }
+  const file = req.file;
+  if (!file || file.size === 0) {
+    res.status(400).json({ error: "ファイルを選んでください。" });
+    return;
+  }
+  if (file.size > FILE_LIMIT) {
+    res.status(413).json({ error: "ファイルは20MB以下にしてください。" });
+    return;
+  }
+  const replyToId = await replyFrom(id, req.body?.replyToId);
+  if (replyToId === undefined) {
+    res.status(400).json({ error: "返信先のメッセージが見つかりません。" });
+    return;
+  }
+  const name = fileNameOf(file);
+  const path = await saveFile(file, `dm/${id}/files`);
+  const row = await insertMessage(
+    id,
+    me,
+    { kind: "file", filePath: path, fileName: name, fileSize: file.size },
+    previewOf({ kind: "file", filePath: path, fileName: name, fileSize: file.size }),
+    { replyToId }
+  );
+  res.status(201).json((await withReactions([row], me))[0]);
+});
 
 // 連絡先（SoraChatのユーザー）を送る
 const contactSchema = z.object({
@@ -950,8 +1093,87 @@ dm.post("/dm/:id/contact", async (req, res) => {
 });
 
 // ファイルのダウンロード（常に添付として返し、ブラウザでの実行を防ぐ）
+dm.get("/dm/messages/:messageId/file", async (req, res) => {
+  const messageId = String(req.params.messageId);
+  const { data, error } = await sb
+    .from("sc_messages")
+    .select("conversation_id, file_path, file_name, deleted_at")
+    .eq("id", messageId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data?.file_path || data.deleted_at || !(await membership(data.conversation_id as string, currentUserId(res)))) {
+    res.status(404).json({ error: "ファイルが見つかりません。" });
+    return;
+  }
+  const file = await readImage(data.file_path as string);
+  if (!file) {
+    res.status(404).json({ error: "ファイルが見つかりません。" });
+    return;
+  }
+  const name = String(data.file_name ?? "file");
+  res.setHeader("content-type", "application/octet-stream");
+  res.setHeader("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.setHeader("x-content-type-options", "nosniff");
+  res.send(file.buffer);
+});
 
 // トークの中で表示するためのファイル（PDF と、テキスト系のファイル）。それ以外は 415 を返す
 // 中身も確かめる（PDF は %PDF- で始まる、テキストは NUL を含まない）。ダウンロードは従来の /file を使う
 const TEXT_VIEW_EXTENSIONS = new Set(["txt", "md", "csv", "log", "json"]);
+dm.get("/dm/messages/:messageId/file/view", async (req, res) => {
+  const messageId = String(req.params.messageId);
+  if (!UUID.test(messageId)) {
+    res.status(404).json({ error: "ファイルが見つかりません。" });
+    return;
+  }
+  const { data, error } = await sb
+    .from("sc_messages")
+    .select("conversation_id, file_path, file_name, deleted_at")
+    .eq("id", messageId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data?.file_path || data.deleted_at || !(await membership(data.conversation_id as string, currentUserId(res)))) {
+    res.status(404).json({ error: "ファイルが見つかりません。" });
+    return;
+  }
+  const file = await readImage(data.file_path as string);
+  if (!file) {
+    res.status(404).json({ error: "ファイルが見つかりません。" });
+    return;
+  }
+  const name = String(data.file_name ?? "file");
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  const buffer = file.buffer;
+  const isPdf = ext === "pdf" && buffer.subarray(0, 5).equals(Buffer.from("%PDF-"));
+  const isText = TEXT_VIEW_EXTENSIONS.has(ext) && !buffer.subarray(0, 8000).includes(0) && buffer.length <= 5 * 1024 * 1024;
+  if (!isPdf && !isText) {
+    res.status(415).json({ error: "このファイルはトークの中では表示できません。" });
+    return;
+  }
+  res.setHeader("content-type", isPdf ? "application/pdf" : "text/plain; charset=utf-8");
+  res.setHeader("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.setHeader("x-content-type-options", "nosniff");
+  res.setHeader("cache-control", "private, no-cache");
+  res.send(buffer);
+});
 
+dm.get("/dm/messages/:messageId/image", async (req, res) => {
+  const messageId = String(req.params.messageId);
+  if (!UUID.test(messageId)) {
+    res.status(404).end();
+    return;
+  }
+  const { data } = await sb.from("sc_messages").select("conversation_id, image_path").eq("id", messageId).maybeSingle();
+  if (!data?.image_path || !(await membership(data.conversation_id as string, currentUserId(res)))) {
+    res.status(404).end();
+    return;
+  }
+  const image = await readImage(data.image_path as string);
+  if (!image) {
+    res.status(404).end();
+    return;
+  }
+  res.setHeader("content-type", image.type);
+  res.setHeader("cache-control", "private, max-age=86400");
+  res.send(image.buffer);
+});

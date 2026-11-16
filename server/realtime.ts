@@ -215,6 +215,72 @@ async function handle(userId: string, ws: WebSocket, raw: RawData) {
     }
     return;
   }
+  if (data?.type === "call") {
+    const signal = callSignalSchema.safeParse(data);
+    if (!signal.success) return;
+    const record = findCall(signal.data.callId);
+    if (!record || !record.participants.has(userId)) return;
+    for (const uid of record.participants) {
+      if (uid !== userId) sendToUser(uid, { type: "call", callId: signal.data.callId, event: signal.data.event, payload: signal.data.payload });
+    }
+    return;
+  }
+  if (data?.type === "battle-send") {
+    const parsed = battleSendSchema.safeParse(data);
+    if (!parsed.success) return;
+    const second = Math.floor(Date.now() / 1000);
+    const counter = battleSendCount.get(ws);
+    if (!counter || counter.second !== second) battleSendCount.set(ws, { second, count: 1 });
+    else if (++counter.count > BATTLE.messagesPerSecond) {
+      reply(ws, { type: "battle", roomId: parsed.data.roomId, event: "error", error: "送りすぎです。少し待ってください。" });
+      return;
+    }
+    const checked = checkPayload(parsed.data.payload);
+    if (!checked.ok) {
+      reply(ws, { type: "battle", roomId: parsed.data.roomId, event: "error", error: checked.error });
+      return;
+    }
+    try {
+      relay(userId, parsed.data.roomId, parsed.data.payload);
+    } catch (error) {
+      reply(ws, {
+        type: "battle",
+        roomId: parsed.data.roomId,
+        event: "error",
+        error: error instanceof BattleError ? error.message : "送れませんでした。"
+      });
+    }
+    return;
+  }
+  if (data?.type === "game-action") {
+    const reqId = typeof data.reqId === "string" ? data.reqId.slice(0, 64) : "";
+    const messageId = typeof data.messageId === "string" ? data.messageId : "";
+    const parsed = gameSocketSchema.safeParse(data);
+    if (!parsed.success) {
+      reply(ws, { type: "game-error", reqId, messageId, error: "その操作はできません。" });
+      return;
+    }
+    const second = Math.floor(Date.now() / 1000);
+    const counter = gameActionCount.get(ws);
+    if (!counter || counter.second !== second) gameActionCount.set(ws, { second, count: 1 });
+    else if (++counter.count > GAME_ACTIONS_PER_SECOND) {
+      reply(ws, { type: "game-error", reqId, messageId, error: "操作が多すぎます。少し待ってください。" });
+      return;
+    }
+    try {
+      await gameAction(parsed.data.messageId, userId, parsed.data.action, rttOf(ws));
+      reply(ws, { type: "game-ack", reqId, messageId: parsed.data.messageId });
+    } catch (error) {
+      if (!(error instanceof GameError)) console.error("[ws] ミニゲームの操作に失敗しました", error);
+      reply(ws, {
+        type: "game-error",
+        reqId,
+        messageId: parsed.data.messageId,
+        error: error instanceof GameError ? error.message : "操作できませんでした。"
+      });
+    }
+    return;
+  }
   if (data?.type !== "send") return;
   const parsed = sendSchema.safeParse(data);
   if (!parsed.success) {

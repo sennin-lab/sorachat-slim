@@ -18,8 +18,8 @@ export async function stampRefOk(ref: string, userId: string): Promise<boolean> 
   // senninstudio のスタンプ（作者本人か、買った人だけ送れる）
   const studioMatch = ref.match(STUDIO_STAMP_REF);
   if (studioMatch) return studioStampAllowed(studioMatch[1], userId);
-  // slim：ストアは無いので、組み込み（デフォルト）スタンプは全部送れる
-  return BUILTIN_REF.test(ref);
+  if (!BUILTIN_REF.test(ref)) return false;
+  return !(await stampLocked(ref, userId));
 }
 
 // 以前送られた自作スタンプの画像（表示のみ）

@@ -352,7 +352,40 @@ admin.post("/admin/users/:id/ip-ban", async (req, res) => {
 });
 
 // アイコン画像の設定・削除（管理者が不適切な画像を外したり、差し替えたりできる）
+admin.post("/admin/users/:id/avatar", upload.single("file"), async (req, res) => {
+  const id = idParam(req, res);
+  if (!id) return;
+  if (!isAllowedImage(req.file)) {
+    res.status(415).json({ error: "JPEG・PNG・WebP・GIF の画像を選んでください。" });
+    return;
+  }
+  const { data: user, error: readError } = await sb.from("sc_users").select("avatar_path").eq("id", id).maybeSingle();
+  if (readError) throw readError;
+  if (!user) {
+    res.status(404).json({ error: "ユーザーが見つかりません。" });
+    return;
+  }
+  const path = await saveImage(req.file!, `avatars/${id}`);
+  const { error } = await sb.from("sc_users").update({ avatar_path: path }).eq("id", id);
+  if (error) throw error;
+  await removeImage(user.avatar_path ?? null);
+  res.json({ ok: true, hasAvatar: true });
+});
 
+admin.delete("/admin/users/:id/avatar", async (req, res) => {
+  const id = idParam(req, res);
+  if (!id) return;
+  const { data: user, error: readError } = await sb.from("sc_users").select("avatar_path").eq("id", id).maybeSingle();
+  if (readError) throw readError;
+  if (!user) {
+    res.status(404).json({ error: "ユーザーが見つかりません。" });
+    return;
+  }
+  const { error } = await sb.from("sc_users").update({ avatar_path: null }).eq("id", id);
+  if (error) throw error;
+  await removeImage(user.avatar_path ?? null);
+  res.json({ ok: true, hasAvatar: false });
+});
 
 // 管理者は、誰とでも友だちにできる（相手の承認は不要。相互に1行ずつ保存する）
 admin.post("/admin/users/:id/friends", async (req, res) => {
@@ -598,4 +631,26 @@ admin.get("/admin/conversations/:id/messages", async (req, res) => {
   );
 });
 
+async function sendMessageFile(req: Request, res: Response, column: "image_path" | "file_path") {
+  const id = idParam(req, res);
+  if (!id) return;
+  const { data } = await sb.from("sc_messages").select(`${column}, file_name`).eq("id", id).maybeSingle();
+  const path = data ? (data as Record<string, string | null>)[column] : null;
+  const image = path ? await readImage(path) : null;
+  if (!image) {
+    res.status(404).end();
+    return;
+  }
+  res.setHeader("cache-control", "private, no-cache");
+  if (column === "image_path") {
+    res.setHeader("content-type", image.type);
+  } else {
+    const name = (data as { file_name?: string | null } | null)?.file_name ?? "file";
+    res.setHeader("content-type", "application/octet-stream");
+    res.setHeader("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+  }
+  res.send(image.buffer);
+}
 
+admin.get("/admin/messages/:id/image", (req, res) => sendMessageFile(req, res, "image_path"));
+admin.get("/admin/messages/:id/file", (req, res) => sendMessageFile(req, res, "file_path"));

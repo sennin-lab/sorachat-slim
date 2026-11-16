@@ -20,9 +20,13 @@ import { rememberAvatars, syncAvatars } from "./avatarCache";
 import { clipLongWords } from "./clip";
 import { ForwardSheet } from "./ForwardSheet";
 import { GroupSheet } from "./GroupSheet";
+import { getCallState, joinCallFromChat, startGroupCall } from "./groupCall";
+import { CallCard } from "./CallCard";
 import { Icon } from "./Icon";
+import { ImageViewer } from "./ImageViewer";
 import { MessageMenu } from "./MessageMenu";
 import { isSocketOpen, onChatEvent, sendChat, sendGameAction, sendTyping } from "./realtime";
+import { UserProfileSheet } from "./UserProfileSheet";
 import { AttachSheet } from "./AttachSheet";
 import { StampSheet } from "./StampSheet";
 import { stampNameOf, stampUrlOf } from "./stamps";
@@ -31,6 +35,7 @@ import { ContactSheet } from "./ContactSheet";
 import { PollCard } from "./PollCard";
 import { PollSheet, type PollDraft } from "./PollSheet";
 import { PollScreen } from "./PollScreen";
+import { FileViewer, viewerKindOf } from "./FileViewer";
 import { GameCard } from "./GameCard";
 import { GameSheet } from "./GameSheet";
 import { RichText } from "./LinkText";
@@ -66,6 +71,15 @@ const messagePreview = (m: Message) => {
   if (m.kind === "call") return "通話";
   // 「\n」という文字のまま届いた改行は、一行の説明では空白にする
   return clipLongWords((m.body ?? "").replace(/\\n/g, " "));
+};
+
+const downloadFile = (url: string, name?: string | null) => {
+  const link = document.createElement("a");
+  link.href = url;
+  if (name) link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 };
 
 type Reader = { id: string; lastReadAt: string };
@@ -183,6 +197,7 @@ export function ChatView({
   const [stampOpen, setStampOpen] = useState(false);
   const [editing, setEditing] = useState<Message | null>(null);
   const [forwarding, setForwarding] = useState<Message | null>(null);
+  const [viewing, setViewing] = useState<Message | null>(null);
   const [showInfo, setShowInfo] = useState(false);
   const [showRoom, setShowRoom] = useState(false);
   const navigate = useNavigate();
@@ -195,6 +210,7 @@ export function ChatView({
   const [pollOpen, setPollOpen] = useState(false);
   // 全画面で開いている投票（メッセージID）と、トーク内で開いているファイル
   const [pollViewingId, setPollViewingId] = useState<string | null>(null);
+  const [fileViewing, setFileViewing] = useState<Message | null>(null);
   const [gameOpen, setGameOpen] = useState(false);
   // クイズを選んだあと、出し方（買った問題集かsenninai）を選ぶ画面
   const [quizSetupOpen, setQuizSetupOpen] = useState(false);
@@ -582,6 +598,38 @@ export function ChatView({
     }
   };
 
+  // 画像・ファイルを送る（同じ形で送信し、返ってきたメッセージを表示する）
+  const uploadFile = async (path: "image" | "file", file: File) => {
+    const replyId = replyTo?.id ?? null;
+    setReplyTo(null);
+    setBusy(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      if (replyId) form.append("replyToId", replyId);
+      const message = await api<Message>(`/api/dm/${conversationId}/${path}`, { method: "POST", body: form });
+      upsert([message]);
+      onActivity();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickImage = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) void uploadFile("image", file);
+  };
+
+  const pickAnyFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) void uploadFile("file", file);
+  };
+
   const shareContact = async (username: string) => {
     const replyId = replyTo?.id ?? null;
     setReplyTo(null);
@@ -753,6 +801,10 @@ export function ChatView({
   // 1回タップの動き（画像は拡大、連絡先はプロフィール、ファイルはダウンロード）。
   // ダブルタップと区別するため、少し待ってから実行する
   const singleTapAction = (m: Message): (() => void) | null => {
+    if (m.kind === "image" && m.imageUrl) return () => setViewing(m);
+    if (m.kind === "contact" && m.contact) return () => setContactUser(m.contact ?? null);
+    // PDF やテキストはトークの中で開く。それ以外のファイルはダウンロード
+    if (m.kind === "file" && m.fileUrl) return () => (viewerKindOf(m.fileName) ? setFileViewing(m) : downloadFile(m.fileUrl!, m.fileName));
     if (m.kind === "poll" && m.poll) return () => setPollViewingId(m.id);
     return null;
   };
@@ -831,6 +883,31 @@ export function ChatView({
   const memberNames = new Map(memberList.map((m): [string, string] => [m.id, m.displayName]));
   const meName = memberList.find((m) => m.id === meId)?.username.toLowerCase() ?? "";
 
+  // トークの「電話に参加」から通話に入る
+  const joinCallFromMessage = (callId: string) => {
+    if (!conversation) return;
+    const current = getCallState();
+    if (current.status === "active" && current.callId === callId) return; // もう参加中
+    if (current.status !== "idle") {
+      setError("ほかの通話に参加中です。");
+      return;
+    }
+    joinCallFromChat({ callId, conversationId, groupName: conversation.name }).catch((e) =>
+      setError(e instanceof Error ? e.message : "通話に参加できませんでした")
+    );
+  };
+
+  // グループ通話を始める（同じグループの全員に着信を送ります）
+  const startGroupVoiceCall = () => {
+    if (!conversation) return;
+    const self = memberList.find((m) => m.id === meId);
+    startGroupCall({
+      conversationId,
+      groupName: conversation.name,
+      me: { id: meId, name: self?.displayName || self?.username || "", hasAvatar: self?.hasAvatar ?? false }
+    }).catch((e) => setError(e instanceof Error ? e.message : "通話を始められませんでした"));
+  };
+
   const typingNames = typingIds.map(
     (id) => memberList.find((m) => m.id === id)?.displayName ?? people.get(id)?.name ?? (isGroup ? "メンバー" : conversation?.name ?? "相手")
   );
@@ -849,8 +926,8 @@ export function ChatView({
         </button>
         <button
           className="head-who"
-          onClick={() => (isGroup ? setShowInfo(true) : setShowRoom(true))}
-          aria-label={isGroup ? "グループ情報" : "トークの設定"}
+          onClick={() => (isGroup ? setShowInfo(true) : setShowProfile(true))}
+          aria-label={isGroup ? "グループ情報" : "プロフィール"}
         >
           <span>
             <strong>{conversation?.name ?? ""}</strong>
@@ -859,6 +936,11 @@ export function ChatView({
         </button>
         {conversation && isGroup && (
           <div className="head-actions">
+            <button className="icon-btn call-btn" aria-label="グループ通話" onClick={startGroupVoiceCall}>
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+                <path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1z" />
+              </svg>
+            </button>
             <button className="icon-btn" aria-label="グループ情報" onClick={() => setShowInfo(true)}>
               <Icon name="info" size={22} />
             </button>
@@ -931,6 +1013,7 @@ export function ChatView({
           }
           const mine = m.senderId === meId;
           const replyTarget = m.replyToId ? byId.get(m.replyToId) : undefined;
+          const showImage = m.kind === "image" && !m.deleted && m.imageUrl;
           const showStamp = m.kind === "stamp" && !m.deleted && Boolean(m.stampRef);
           const hasStatus = Boolean(m.status) || (m.edited && !m.deleted);
           const sender = people.get(m.senderId);
@@ -962,7 +1045,19 @@ export function ChatView({
                 {!mine && (
                   <div className="msg-avatar">
                     {!info.joinPrev && avatarId && (
-                      <Avatar userId={avatarId} hasAvatar={avatarHas} name={avatarName} size={36} />
+                      isGroup ? (
+                        // グループでは相手のアイコンを押すと、その人のプロフィールを開く
+                        <button
+                          type="button"
+                          className="avatar-tap"
+                          aria-label={`${avatarName}のプロフィールを開く`}
+                          onClick={() => navigate(`/profile/${avatarId}`)}
+                        >
+                          <Avatar userId={avatarId} hasAvatar={avatarHas} name={avatarName} size={36} />
+                        </button>
+                      ) : (
+                        <Avatar userId={avatarId} hasAvatar={avatarHas} name={avatarName} size={36} />
+                      )
                     )}
                   </div>
                 )}
@@ -982,7 +1077,7 @@ export function ChatView({
                   <div className="bubble-line">
                     {mine && meta}
                     <div
-                      className={`bubble  ${showStamp ? "stamp" : ""} ${m.kind === "poll" && m.poll && !m.deleted ? "poll" : ""} ${m.kind === "game" && !m.deleted ? "game" : ""} ${m.deleted ? "deleted" : ""} ${m.status ? "pending" : ""} ${hasStatus ? "has-status" : ""}`}
+                      className={`bubble ${showImage ? "image" : ""} ${showStamp ? "stamp" : ""} ${m.kind === "poll" && m.poll && !m.deleted ? "poll" : ""} ${m.kind === "game" && !m.deleted ? "game" : ""} ${m.deleted ? "deleted" : ""} ${m.status ? "pending" : ""} ${hasStatus ? "has-status" : ""}`}
                       onContextMenu={(e) => e.preventDefault()}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -991,6 +1086,8 @@ export function ChatView({
                     >
                       {m.deleted ? (
                         <p className="unsent">送信を取り消しました</p>
+                      ) : showImage ? (
+                        <img src={m.imageUrl!} alt="送信された画像" loading="lazy" draggable={false} />
                       ) : m.kind === "stamp" && m.stampRef && stampUrlOf(m.stampRef) ? (
                         <img
                           className="stamp-img"
@@ -1002,6 +1099,22 @@ export function ChatView({
                       ) : m.kind === "stamp" ? (
                         // 画像が見つからない古いスタンプは、文字コードの名前を出さずに「スタンプ」と表示する
                         <p className="stamp-missing">{m.stampRef?.startsWith("builtin:") ? `スタンプ（${stampNameOf(m.stampRef)}）` : "スタンプ"}</p>
+                      ) : m.kind === "file" && m.fileUrl ? (
+                        <a
+                          className="file-card"
+                          href={m.fileUrl}
+                          download={m.fileName ?? undefined}
+                          onClick={(e) => e.preventDefault()}
+                        >
+                          <Icon name="file" size={28} />
+                          <span className="file-text">
+                            <strong>{m.fileName}</strong>
+                            <small>
+                            {formatSize(m.fileSize)}
+                            {viewerKindOf(m.fileName) ? " ・ タップで表示" : ""}
+                          </small>
+                          </span>
+                        </a>
                       ) : m.kind === "contact" && m.contact ? (
                         <button type="button" className="contact-card">
                           <Avatar userId={m.contact.id} hasAvatar={m.contact.hasAvatar} name={m.contact.displayName} size={40} />
@@ -1012,6 +1125,8 @@ export function ChatView({
                         </button>
                       ) : m.kind === "poll" && m.poll ? (
                         <PollCard poll={m.poll} onVote={(index) => void vote(m.id, index)} onOpen={() => setPollViewingId(m.id)} />
+                      ) : m.kind === "call" && m.call ? (
+                        <CallCard call={m.call} onJoin={() => joinCallFromMessage(m.call!.callId)} />
                       ) : m.kind === "game" ? (
                         m.game ? (
                           <GameCard game={m.game} names={memberNames} onAction={(action, extra) => gameAction(m.id, action, extra)} />
@@ -1123,6 +1238,8 @@ export function ChatView({
       )}
 
       <form className="composer" ref={formRef} onSubmit={onSubmit}>
+        <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden onChange={pickImage} />
+        <input ref={anyFileRef} type="file" hidden onChange={pickAnyFile} />
         <button
           type="button"
           className="composer-icon plus"
@@ -1186,6 +1303,9 @@ export function ChatView({
           onClose={() => setForwarding(null)}
         />
       )}
+      {viewing?.imageUrl && (
+        <ImageViewer src={viewing.imageUrl} id={viewing.id} onClose={() => setViewing(null)} />
+      )}
       {notice && <div className="toast">{notice}</div>}
 
       {showInfo && conversation && (
@@ -1213,6 +1333,14 @@ export function ChatView({
       {attachOpen && (
         <AttachSheet
           onClose={() => setAttachOpen(false)}
+          onImage={() => {
+            setAttachOpen(false);
+            fileRef.current?.click();
+          }}
+          onFile={() => {
+            setAttachOpen(false);
+            anyFileRef.current?.click();
+          }}
           onContact={() => {
             setAttachOpen(false);
             setContactOpen(true);
@@ -1221,6 +1349,14 @@ export function ChatView({
             setAttachOpen(false);
             setPollOpen(true);
           }}
+          onGame={
+            isGroup
+              ? () => {
+                  setAttachOpen(false);
+                  setGameOpen(true);
+                }
+              : undefined
+          }
         />
       )}
       {pollOpen && <PollSheet onSubmit={sendPoll} onClose={() => setPollOpen(false)} />}
@@ -1231,6 +1367,15 @@ export function ChatView({
           onVote={(index) => void vote(pollViewingMessage.id, index)}
           onClosePoll={() => void closePoll(pollViewingMessage.id)}
           onClose={() => setPollViewingId(null)}
+        />
+      )}
+      {fileViewing?.fileUrl && (
+        <FileViewer
+          url={`${fileViewing.fileUrl}/view`}
+          name={fileViewing.fileName ?? null}
+          size={formatSize(fileViewing.fileSize)}
+          onClose={() => setFileViewing(null)}
+          onDownload={() => downloadFile(fileViewing.fileUrl!, fileViewing.fileName)}
         />
       )}
       {gameOpen && (
@@ -1258,6 +1403,17 @@ export function ChatView({
           meId={meId}
           onPick={(username) => void shareContact(username)}
           onClose={() => setContactOpen(false)}
+        />
+      )}
+      {contactUser && <UserProfileSheet userId={contactUser.id} onClose={() => setContactUser(null)} />}
+      {showProfile && conversation?.otherId && (
+        <UserProfileSheet
+          userId={conversation.otherId}
+          onClose={() => setShowProfile(false)}
+          onRoomSettings={() => {
+            setShowProfile(false);
+            setShowRoom(true);
+          }}
         />
       )}
       {botDm && confirmSummary && <SenninaiConfirm summary={confirmSummary} onDone={() => setConfirmSummary(null)} />}

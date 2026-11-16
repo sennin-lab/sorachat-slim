@@ -84,6 +84,9 @@ export const config = {
   supabaseServiceKey: need("SUPABASE_SERVICE_ROLE_KEY"),
   supabaseAnonKey: need("SUPABASE_ANON_KEY"),
   supabaseJwtSecret: need("SUPABASE_JWT_SECRET"),
+  // 画像・ファイルの保存先（Turso）
+  tursoUrl: need("TURSO_DATABASE_URL"),
+  tursoAuthToken: need("TURSO_AUTH_TOKEN"),
   sennin: {
     clientId: env("SENNIN_CLIENT_ID"),
     clientSecret: env("SENNIN_CLIENT_SECRET"),

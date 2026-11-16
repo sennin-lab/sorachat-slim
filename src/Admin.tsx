@@ -712,7 +712,27 @@ function AvatarPanel({ user, onChanged, onError }: { user: UserDetail; onChanged
   return (
     <section className="admin-card">
       <h3 className="admin-section-title">アイコン画像</h3>
-      <p className="muted small">slim 版ではアイコン画像は変更・アップロードできません。</p>
+      <p className="muted small">JPEG・PNG・WebP・GIF（10MBまで）を設定できます。</p>
+      <div className="admin-avatar-actions">
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void upload(file);
+          }}
+        />
+        <button className="btn-secondary" disabled={busy} onClick={() => inputRef.current?.click()}>
+          {busy ? "処理中…" : user.hasAvatar ? "画像を差し替える" : "画像を設定する"}
+        </button>
+        {user.hasAvatar && (
+          <button className="btn-danger" disabled={busy} onClick={() => void remove()}>
+            画像を削除
+          </button>
+        )}
+      </div>
     </section>
   );
 }

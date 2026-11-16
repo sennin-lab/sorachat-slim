@@ -249,6 +249,10 @@ function openSocket() {
       battleListeners.forEach((listener) => listener(data as BattleSocketEvent));
       return;
     }
+    if (data.type === "ring" || data.type === "call") {
+      signalListeners.forEach((listener) => listener(data as SignalEvent));
+      return;
+    }
     emitChat(data as ChatEvent);
   };
 

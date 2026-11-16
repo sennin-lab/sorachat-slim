@@ -8,18 +8,33 @@ import { ConversationList } from "./ConversationList";
 import { connectRealtime, onDataEvent, startDataSync } from "./realtime";
 import { refreshPush } from "./push";
 import { NotifyPrompt } from "./NotifyPrompt";
+import { OpenChatSheet } from "./OpenChatSheet";
+import { ReferralSheet } from "./ReferralSheet";
+import { StorePage } from "./StorePage";
+import { StudioPage } from "./StudioPage";
+import { TubePage } from "./TubePage";
+import { ExtensionsPage } from "./ExtensionsPage";
 import { ChatBootScreen } from "./Loading";
+// SenninPay は使うときだけ読み込む（通常の起動を軽く保つため）
+const SenninPayPage = lazy(() => import("./SenninPayPage").then((m) => ({ default: m.SenninPayPage })));
+// senningames（1人で遊ぶゲーム）も、開くときだけ読み込む
+const SenningamesPage = lazy(() => import("./SenningamesPage").then((m) => ({ default: m.SenningamesPage })));
+// SenninBank（銀行）も、開くときだけ読み込む
+const BankPage = lazy(() => import("./BankPage").then((m) => ({ default: m.BankPage })));
 import { AddFriendSheet } from "./AddFriendSheet";
 import { FriendsTab } from "./FriendsTab";
 import { Icon } from "./Icon";
 import { NewChatSheet } from "./NewChatSheet";
+import { ProfileSheet } from "./ProfileSheet";
 import { ExitMotion } from "./ExitMotion";
 import { SettingsSheet } from "./SettingsSheet";
+import { UserProfileSheet } from "./UserProfileSheet";
+import { Avatar } from "./Avatar";
 import { SENNIN_BOT_ID } from "./robot";
 import type { Conversation, Friend, Me } from "./types";
 import { saveFriends, syncAvatars } from "./avatarCache";
 
-type Tab = "talk" | "friends";
+type Tab = "talk" | "friends" | "more";
 
 // 「あとで」を押したら、この日数のあいだは通知の確認を出さない
 const NOTIFY_LATER_KEY = "sorachat-notify-later";
@@ -41,15 +56,17 @@ const shouldAskNotify = (me: Me) => {
 // URL とタブの対応。プロフィールなどの重ねて表示する画面では null（直前のタブを保つ）
 const tabOfPath = (path: string): Tab | null => {
   if (path.startsWith("/friends")) return "friends";
+  if (path.startsWith("/more") || path.startsWith("/store") || path.startsWith("/studio") || path.startsWith("/pay") || path.startsWith("/tube") || path.startsWith("/extensions") || path.startsWith("/bank")) return "more";
   if (path === "/" || path.startsWith("/home") || path.startsWith("/dm/") || path.startsWith("/groupchat/")) return "talk";
   return null;
 };
 
-const TAB_PATH: Record<Tab, string> = { talk: "/home", friends: "/friends" };
+const TAB_PATH: Record<Tab, string> = { talk: "/home", friends: "/friends", more: "/more" };
 
 const TABS: { id: Tab; label: string; icon: "chat" | "users" | "menu" }[] = [
   { id: "talk", label: "トーク", icon: "chat" },
-  { id: "friends", label: "友だち", icon: "users" }
+  { id: "friends", label: "友だち", icon: "users" },
+  { id: "more", label: "その他", icon: "menu" }
 ];
 
 export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me) => void; onLogout: () => void }) {
@@ -62,10 +79,31 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
   const location = useLocation();
   const path = location.pathname;
   const chatId = (matchPath("/dm/:id", path) ?? matchPath("/groupchat/:id", path))?.params.id ?? null;
+  const viewUser = matchPath("/profile/:id", path)?.params.id ?? null;
+  // 仙人ストア（/store）と senninstudio（/studio）は、専用のページとして開く
+  // （/store/item/:id・/store/author/:id、/studio/works/:id/edit のような下の画面も、同じ専用ページで開く）
+  const onStorePage = path === "/store" || path.startsWith("/store/");
+  const onStudioPage = path === "/studio" || path.startsWith("/studio/");
+  // SenninPay（/pay）も専用のページとして開く
+  const onPayPage = path === "/pay" || path.startsWith("/pay/");
+  // SenninBank（/bank）も専用のページとして開く
+  const onBankPage = path === "/bank" || path.startsWith("/bank/");
+  // senningames（/senningames）も専用のページとして開く
+  const onGamesPage = path === "/senningames" || path.startsWith("/senningames/");
+  // 仙人Tube Plus（/tube）も専用のページとして開く
+  const onTubePage = path === "/tube" || path.startsWith("/tube/");
+  // 拡張機能（その他 →「拡張機能」）も専用のページとして開く（/extensions）
+  const onExtensionsPage = path === "/extensions" || path.startsWith("/extensions/");
+
   const [selectedId, setSelectedId] = useState<string | null>(chatId);
   const [tab, setTab] = useState<Tab>(() => tabOfPath(path) ?? "talk");
+  const [showProfile, setShowProfile] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  const [showOpenChats, setShowOpenChats] = useState(false);
+  const [showReferral, setShowReferral] = useState(false);
+  // 仙人アカウントの連携から戻ったときの結果（連携できた・できなかった）。ストアと senninstudio のページに表示する
+  const [storeFlash, setStoreFlash] = useState<{ ok: boolean; text: string } | null>(null);
   const [showNotifyPrompt, setShowNotifyPrompt] = useState(() => shouldAskNotify(me));
   const [showAdd, setShowAdd] = useState(false);
   // 友だちが増えた・減ったときに友だち一覧を取り直すための番号
@@ -112,6 +150,43 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
       for (const name of ["--mine", "--chat-bg", "--accent", "--accent-ink"]) style.removeProperty(name);
     }
   }, [me.storeTheme, JSON.stringify(me.storeThemePalette ?? null)]);
+
+  // 仙人アカウントの連携から戻ってきたら（/store か /studio に戻る）、結果を出す（URL の印は消す）
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const linked = params.get("store") === "linked";
+    const error = params.get("store_error");
+    if (!linked && !error) return;
+    const studioPage = path.startsWith("/studio");
+    const payPage = path.startsWith("/pay");
+    const gamesPage = path.startsWith("/senningames");
+    const bankPage = path.startsWith("/bank");
+    setStoreFlash(
+      linked
+        ? {
+            ok: true,
+            text: studioPage
+              ? "仙人アカウントと連携しました。作品を公開できます。"
+              : payPage
+                ? "仙人アカウントと連携しました。SenninPayが使えます。"
+                : gamesPage
+                  ? "仙人アカウントと連携しました。ポイントを出金できます。"
+                  : bankPage
+                    ? "仙人アカウントと連携しました。SenninBank が使えます。"
+                    : "仙人アカウントと連携しました。ストアで買い物できます。"
+          }
+        : { ok: false, text: error ?? "" }
+    );
+    setTab("more");
+    navigate(studioPage ? "/studio" : payPage ? "/pay" : gamesPage ? "/senningames" : bankPage ? "/bank" : "/store", { replace: true });
+  }, []);
+
+  // 専用ページを閉じる（開いた元の画面へ戻る。直接開いたときは「その他」へ）
+  const closePage = () => {
+    setStoreFlash(null);
+    if ((window.history.state?.idx ?? 0) > 0) navigate(-1);
+    else navigate("/more", { replace: true });
+  };
 
   // URL に合わせてタブと選択中のトークを更新する
   useEffect(() => {
@@ -168,7 +243,7 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
   }, [me.aiEnabled, refresh]);
 
   // AI機能がオフになったら、一覧に出さないだけでなく、開いていたsenninaiのトークも閉じる
-  const visibleList = list.filter((c) => c.otherId !== SENNIN_BOT_ID);
+  const visibleList = list.filter((c) => me.aiEnabled || c.otherId !== SENNIN_BOT_ID);
   useEffect(() => {
     if (me.aiEnabled || !selectedId) return;
     if (list.find((c) => c.id === selectedId)?.otherId === SENNIN_BOT_ID) {
@@ -216,6 +291,12 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
     navigate(`/${isGroup ? "groupchat" : "dm"}/${id}`, { replace: options?.replace ?? false });
   };
 
+  // プロフィールを閉じる（開いた元の画面へ戻る）
+  const closeProfile = () => {
+    if ((window.history.state?.idx ?? 0) > 0) navigate(-1);
+    else navigate(TAB_PATH[tab], { replace: true });
+  };
+
   // 名前（ユーザー名）からトークを開く。友だちの画面から「トーク」を押したとき
   // 成功したら true を返す（失敗時は呼び出し側で案内を出せるようにする）
   // 連打されても1回だけ要求する（同じ相手への要求が終わるまで、次は待たせる）
@@ -227,7 +308,7 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
         const result = await api<{ id: string }>("/api/dm/open", post({ username }));
         setShowAdd(false);
         setTab("talk");
-        select(result.id);
+        select(result.id, { replace: Boolean(viewUser) });
         refresh();
         return true;
       } catch {
@@ -267,11 +348,130 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
           {tab === "friends" && (
             <FriendsTab
               me={me}
-              onOpenDm={(username) => void openDmWith(username)}
-              onOpenSettings={() => setShowSettings(true)}
+              onOpenMe={() => setShowProfile(true)}
+              onOpenUser={(id) => navigate(`/profile/${id}`)}
               version={friendsVersion}
               onAdd={() => setShowAdd(true)}
             />
+          )}
+          {tab === "more" && (
+            <div className="tab-panel" key="more">
+              <header className="tab-head">
+                <strong className="tab-title">その他</strong>
+                <button className="icon-btn" onClick={() => setShowSettings(true)} aria-label="設定">
+                  <Icon name="settings" size={23} />
+                </button>
+              </header>
+              <button className="profile-card" onClick={() => setShowProfile(true)}>
+                <Avatar userId={me.id} hasAvatar={me.hasAvatar} name={me.displayName} size={64} />
+                <span className="row-text">
+                  <strong>{me.displayName}</strong>
+                  <small>{me.bio || "ステータスメッセージを設定しよう"}</small>
+                </span>
+                <Icon name="chevron" size={18} className="chev" />
+              </button>
+              <ul className="more-list">
+                <li>
+                  <button onClick={() => setShowProfile(true)}>
+                    <span className="option-icon">
+                      <Icon name="user" size={20} />
+                    </span>
+                    プロフィール
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => setShowOpenChats(true)}>
+                    <span className="option-icon">
+                      <Icon name="users" size={20} />
+                    </span>
+                    オープンチャット
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => setShowReferral(true)}>
+                    <span className="option-icon">
+                      <Icon name="userPlus" size={20} />
+                    </span>
+                    友だち招待
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => navigate("/studio")}>
+                    <span className="option-icon">
+                      <Icon name="edit" size={20} />
+                    </span>
+                    senninstudio
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => navigate("/store")}>
+                    <span className="option-icon">
+                      <Icon name="store" size={20} />
+                    </span>
+                    仙人ストア
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => navigate("/extensions")}>
+                    <span className="option-icon">
+                      <Icon name="code" size={20} />
+                    </span>
+                    拡張機能
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => navigate("/pay")}>
+                    <span className="option-icon">
+                      <Icon name="wallet" size={20} />
+                    </span>
+                    SenninPay
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => navigate("/bank")}>
+                    <span className="option-icon">
+                      <Icon name="bank" size={20} />
+                    </span>
+                    SenninBank
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => navigate("/senningames")}>
+                    <span className="option-icon">
+                      <Icon name="game" size={20} />
+                    </span>
+                    senningames
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => navigate("/tube")}>
+                    <span className="option-icon">
+                      <Icon name="play" size={20} />
+                    </span>
+                    仙人Tube Plus
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => setShowSettings(true)}>
+                    <span className="option-icon">
+                      <Icon name="settings" size={20} />
+                    </span>
+                    設定
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                </li>
+              </ul>
+            </div>
           )}
         </div>
 
@@ -325,6 +525,18 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
         )}
       </main>
 
+      <ExitMotion value={showProfile ? true : null}>
+        {() => (
+          <ProfileSheet
+            me={me}
+            theme={theme}
+            onThemeChange={setTheme}
+            onClose={() => setShowProfile(false)}
+            onChange={onMeChange}
+            onLogout={onLogout}
+          />
+        )}
+      </ExitMotion>
       {showSettings && (
         <SettingsSheet
           me={me}
@@ -352,6 +564,57 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
           onClose={() => setShowAdd(false)}
           onAdded={bumpFriends}
           onOpenDm={(username) => openDmWith(username)}
+        />
+      )}
+      <ExitMotion value={viewUser}>
+        {(userId) => (
+          <UserProfileSheet
+            userId={userId}
+            onClose={closeProfile}
+            onMessage={(username) => void openDmWith(username)}
+            onFriendsChanged={bumpFriends}
+          />
+        )}
+      </ExitMotion>
+      <ExitMotion value={onStudioPage ? true : null}>{() => <StudioPage flash={storeFlash} onBack={closePage} />}</ExitMotion>
+      <ExitMotion value={onStorePage ? true : null}>
+        {() => <StorePage me={me} flash={storeFlash} onBack={closePage} onMeChange={onMeChange} />}
+      </ExitMotion>
+      <ExitMotion value={onPayPage ? true : null}>
+        {() => (
+          <Suspense fallback={null}>
+            <SenninPayPage me={me} flash={storeFlash} onBack={closePage} />
+          </Suspense>
+        )}
+      </ExitMotion>
+      <ExitMotion value={onGamesPage ? true : null}>
+        {() => (
+          <Suspense fallback={null}>
+            <SenningamesPage flash={storeFlash} onBack={closePage} />
+          </Suspense>
+        )}
+      </ExitMotion>
+      <ExitMotion value={onBankPage ? true : null}>
+        {() => (
+          <Suspense fallback={null}>
+            <BankPage me={me} flash={storeFlash} onBack={closePage} />
+          </Suspense>
+        )}
+      </ExitMotion>
+      <ExitMotion value={onTubePage ? true : null}>{() => <TubePage onBack={closePage} />}</ExitMotion>
+      <ExitMotion value={onExtensionsPage ? true : null}>
+        {() => <ExtensionsPage me={me} onBack={closePage} onMeChange={onMeChange} />}
+      </ExitMotion>
+      {showReferral && <ReferralSheet onClose={() => setShowReferral(false)} />}
+      {showOpenChats && (
+        <OpenChatSheet
+          onClose={() => setShowOpenChats(false)}
+          onOpen={(id) => {
+            setShowOpenChats(false);
+            setTab("talk");
+            select(id);
+            refresh();
+          }}
         />
       )}
       {showNotifyPrompt && (
