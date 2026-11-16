@@ -225,19 +225,17 @@ export function GroupSheet({
             size={96}
             src={`/api/dm/${conversationId}/avatar?v=${avatarKey}`}
           />
-        {isOwner ? (
-          <div className="inline-edit">
-            <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={40} aria-label="グループ名" />
-            <button
-              className="btn-small accent"
-              onClick={() => run(() => api(`/api/dm/${conversationId}`, post({ title: title.trim() })).then(() => undefined), "グループ名を変更しました。")}
-            >
-              変更
-            </button>
-          </div>
-        ) : (
-          <h2 className="hero-name">{detail.title}</h2>
-        )}
+        {/* グループ名は、メンバーなら全員が変更できる */}
+        <div className="inline-edit">
+          <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={40} aria-label="グループ名" />
+          <button
+            className="btn-small accent"
+            disabled={busy || title.trim() === "" || title.trim() === detail.title}
+            onClick={() => run(() => api(`/api/dm/${conversationId}`, post({ title: title.trim() })).then(() => undefined), "グループ名を変更しました。")}
+          >
+            変更
+          </button>
+        </div>
         <p className="muted small">{detail.members.length}人のメンバー</p>
       </div>
 

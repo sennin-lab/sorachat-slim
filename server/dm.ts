@@ -301,8 +301,9 @@ const titleSchema = z.object({ title: z.string().trim().min(1).max(40) });
 dm.post("/dm/:id", async (req, res) => {
   const id = String(req.params.id);
   const me = await membership(id, currentUserId(res));
-  if (!me || me.role !== "owner") {
-    res.status(403).json({ error: "グループ名を変更できるのは管理者だけです。" });
+  // グループのメンバーなら、全員がグループ名を変更できる（メンバーでない人は不可）
+  if (!me) {
+    res.status(403).json({ error: "グループ名を変更できるのはグループのメンバーだけです。" });
     return;
   }
   const parsed = titleSchema.safeParse(req.body);
