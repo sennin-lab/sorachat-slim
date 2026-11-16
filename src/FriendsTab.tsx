@@ -11,14 +11,15 @@ type Requests = { incoming: Friend[]; outgoing: Friend[] };
 // 「友だち」タブ：フレンドリクエスト（届いた分・送信中の分）、自分のプロフィール、友だち一覧
 export function FriendsTab({
   me,
-  onOpenMe,
-  onOpenUser,
+  onOpenDm,
+  onOpenSettings,
   onAdd,
   version = 0
 }: {
   me: Me;
-  onOpenMe: () => void;
-  onOpenUser: (id: string) => void;
+  // 友だちをタップ・申請を許可したとき、その人とのトークを開く（slim 版はプロフィール画面を持たない）
+  onOpenDm: (username: string) => void;
+  onOpenSettings: () => void;
   onAdd: () => void;
   version?: number;
 }) {
@@ -55,12 +56,14 @@ export function FriendsTab({
   }, [items, query]);
 
   // 届いた申請を許可・拒否する
-  const answer = async (userId: string, accept: boolean) => {
+  const answer = async (userId: string, username: string, accept: boolean) => {
     setBusy(userId);
     setError("");
     try {
       await api(`/api/friends/requests/${userId}/${accept ? "accept" : "decline"}`, post());
       setReload((n) => n + 1);
+      // 許可して友だちになったら、そのままDMを開く
+      if (accept) onOpenDm(username);
     } catch {
       setError("通信に失敗しました。もう一度お試しください。");
     } finally {
@@ -86,9 +89,14 @@ export function FriendsTab({
     <div className="tab-panel" key="friends">
       <header className="tab-head">
         <strong className="tab-title">友だち</strong>
-        <button className="icon-btn" onClick={onAdd} aria-label="友だちを追加">
-          <Icon name="userPlus" size={24} />
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button className="icon-btn" onClick={onOpenSettings} aria-label="設定">
+            <Icon name="settings" size={23} />
+          </button>
+          <button className="icon-btn" onClick={onAdd} aria-label="友だちを追加">
+            <Icon name="userPlus" size={24} />
+          </button>
+        </div>
       </header>
 
       <div className="search-bar">
@@ -99,15 +107,6 @@ export function FriendsTab({
       </div>
 
       <ul className="user-list-ul">
-        <li className="user-li" style={{ "--i": 0 } as CSSProperties}>
-          <button className="user-row me-row" onClick={onOpenMe}>
-            <Avatar userId={me.id} hasAvatar={me.hasAvatar} name={me.displayName} size={50} />
-            <span className="row-text">
-              <strong>{me.displayName}</strong>
-              <small>{me.bio || "ステータスメッセージを設定しよう"}</small>
-            </span>
-          </button>
-        </li>
       </ul>
 
       {requests.incoming.length > 0 && (
@@ -127,15 +126,14 @@ export function FriendsTab({
                 sub={`@${f.username}`}
                 right={
                   <span className="request-actions">
-                    <button className="btn-small" disabled={busy === f.id} onClick={() => void answer(f.id, false)}>
+                    <button className="btn-small" disabled={busy === f.id} onClick={() => void answer(f.id, f.username, false)}>
                       拒否
                     </button>
-                    <button className="btn-small accent" disabled={busy === f.id} onClick={() => void answer(f.id, true)}>
+                    <button className="btn-small accent" disabled={busy === f.id} onClick={() => void answer(f.id, f.username, true)}>
                       許可
                     </button>
                   </span>
                 }
-                onClick={() => onOpenUser(f.id)}
               />
             ))}
           </ul>
@@ -198,7 +196,7 @@ export function FriendsTab({
               hasAvatar={f.hasAvatar}
               name={f.displayName}
               sub={f.bio || `@${f.username}`}
-              onClick={() => onOpenUser(f.id)}
+              onClick={() => onOpenDm(f.username)}
             />
           ))}
         </ul>

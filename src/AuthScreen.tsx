@@ -85,14 +85,6 @@ export function AuthScreen({ initialError, onShowIntro }: { initialError: string
   const [error, setError] = useState(initialError ?? "");
   const [errorKey, setErrorKey] = useState(0);
   const [busy, setBusy] = useState(false);
-  // 仙人アカウントでログインできるか（サーバーの設定がある場合だけ、ボタンを出す）
-  const [senninOn, setSenninOn] = useState(false);
-  useEffect(() => {
-    api<{ sennin: boolean }>("/api/auth/options")
-      .then((data) => setSenninOn(Boolean(data.sennin)))
-      .catch(() => setSenninOn(false));
-  }, []);
-
   const isRegister = mode === "register";
   const normalizedName = username.trim().toLowerCase();
   const usernameInvalid = username.length > 0 && !USERNAME_RE.test(normalizedName);
@@ -181,23 +173,6 @@ export function AuthScreen({ initialError, onShowIntro }: { initialError: string
             <p className="notice error center auth-error" key={errorKey}>
               {error}
             </p>
-          )}
-          {senninOn && (
-          <a className="auth-sennin" href="/api/auth/sennin/login">
-            <span className="auth-sennin-icon">
-              <RobotFace />
-            </span>
-            <span className="auth-sennin-text">
-              <strong>仙人アカウントで続ける</strong>
-              <small>かんたんにはじめられます</small>
-            </span>
-            <Icon name="chevron" size={20} />
-          </a>
-          )}
-          {senninOn && (
-            <div className="divider">
-              <span>または</span>
-            </div>
           )}
           <button className="btn-primary wide auth-cta" onClick={() => setMode("login")}>
             ログイン

@@ -158,15 +158,15 @@ export function toMessage(
     kind: row.kind,
     // 投票の本文は質問文にする（一覧・返信の表示用）
     // スタンプは本文を持たない（古い行では本文に名前が入っていることがあるので表示しない）
-    body: deleted ? null : row.kind === "poll" ? pollData?.question ?? null : row.kind === "stamp" || row.kind === "call" ? null : decryptText(row.body),
+    body: deleted ? null : row.kind === "poll" ? pollData?.question ?? null : row.kind === "stamp" || row.kind === "call" ? null : row.kind === "image" || row.kind === "file" ? "（画像・ファイルは表示できません）" : decryptText(row.body),
     poll: deleted ? null : poll,
     game: deleted ? null : game,
     // 通話カード（進行中なら「電話に参加」を出す）
     call: row.kind === "call" && !deleted && callId ? { callId, active: findCall(callId) !== undefined } : null,
-    imageUrl: row.kind === "image" && !deleted ? `/api/dm/messages/${row.id}/image` : null,
-    fileName: row.kind === "file" && !deleted ? row.file_name : null,
-    fileSize: row.kind === "file" && !deleted ? row.file_size : null,
-    fileUrl: row.kind === "file" && !deleted ? `/api/dm/messages/${row.id}/file` : null,
+    imageUrl: null,
+    fileName: null,
+    fileSize: null,
+    fileUrl: null,
     contact: row.kind === "contact" && !deleted ? contact : null,
     stampRef: row.kind === "stamp" && !deleted ? stampRefOf(row) : null,
     createdAt: row.created_at,

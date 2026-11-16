@@ -1,4 +1,5 @@
 import { stamps } from "./stamps.js";
+import { securityGate } from "./security.js";
 import express from "express";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
@@ -13,35 +14,22 @@ import { config } from "./config.js";
 import { dm } from "./dm.js";
 import { resumeGameTimers } from "./games.js";
 import { friends } from "./friends.js";
-import { openChats } from "./openchat.js";
 import { push } from "./push.js";
-import { senninai } from "./senninai.js";
 import { blocks } from "./blocks.js";
-import { calls } from "./calls.js";
 import { BlockedError } from "./messages.js";
 import { attachRealtime } from "./realtime.js";
 import { initializeMaintenanceSettings, maintenanceGate } from "./maintenance.js";
 import { getStatus } from "./status.js";
-import { store } from "./store.js";
-import { senninPay } from "./senninpay.js";
-import { senningames } from "./senningames.js";
-import { adminPay } from "./adminPay.js";
-import { studio } from "./studio.js";
-import { studioAdmin } from "./studioAdmin.js";
-import { studioReviews } from "./studioReviews.js";
-import { battle } from "./battle.js";
-import { extensionStorage } from "./extensionStorage.js";
-import tubeRouter from "./tube/router.js";
 import { ipBanGate, reloadIpBans } from "./ipBans.js";
-import { referral } from "./referral.js";
-import { bank } from "./bank.js";
-import { bots } from "./bots.js";
 
 const app = express();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 app.set("trust proxy", 1);
+app.disable("x-powered-by");
 app.use(helmet());
+// セキュリティの共通処理（Permissions-Policy・書き込みのOrigin確認・回数制限）
+app.use(securityGate);
 app.use(express.json({ limit: "32kb" }));
 app.use(cookieParser());
 
@@ -62,33 +50,15 @@ app.get("/api/status", async (_req, res) => {
 // /api/admin と /admin はメンテナンス中も利用できる。
 app.use(maintenanceGate);
 
-// Bots（/bots と /api/bots/*）。SoraChat の画面からはリンクしない
-app.use(bots);
 
-// 仙人Tube Plus（/tube の中で動く。SoraChat と同じ場所から開く）
-app.use("/tube", tubeRouter);
 
 app.use("/api", accounts);
-app.use("/api", referral);
 app.use("/api", dm);
 app.use("/api", friends);
 app.use("/api", push);
-app.use("/api", openChats);
-app.use("/api", senninai);
 app.use("/api", stamps);
 app.use("/api", blocks);
-app.use("/api", calls);
-app.use("/api", store);
-app.use("/api", senninPay);
-app.use("/api", bank);
-app.use("/api", senningames);
-app.use("/api", studio);
-app.use("/api", studioReviews);
-app.use("/api", battle);
-app.use("/api", extensionStorage);
-app.use("/api", studioAdmin);
 app.use("/api", admin);
-app.use("/api", adminPay);
 app.use("/api", (_req, res) => {
   res.status(404).json({ error: "見つかりません。" });
 });
