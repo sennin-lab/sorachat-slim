@@ -5,8 +5,6 @@ import { decryptText } from "./crypto.js";
 import { sendToUser } from "./hub.js";
 import { BlockedError, COLUMNS, broadcastList, findOrCreateDm, insertMessage, membership, pollDataOf, postNotice, type MessageRow } from "./messages.js";
 import { sb } from "./supabase.js";
-import { featureAllowed } from "./storeAccess.js";
-import { aiStyleInstructionFor } from "./studioData.js";
 
 // senninai（AIチャット）
 // sc_users に固定IDのボットとして登録する（schema_v12.sql。パスワードがないのでログインはできない）。
@@ -18,11 +16,6 @@ export const BOT_NAME = "senninai";
 
 const PERSONA = "あなたは「senninai」というチャットアプリのAIです。日本語で、簡潔に答えてください。";
 
-// 使っている応答スタイル（senninstudio で買った作品）を、AIへの指示に足す。選んでいなければ基本の指示だけ
-async function personaFor(userId: string): Promise<string> {
-  const style = await aiStyleInstructionFor(userId).catch(() => "");
-  return style ? `${PERSONA} ${style}` : PERSONA;
-}
 const MAX_REPLY = 900;
 const MAX_CODE_REPLY = 12000;
 const MAX_CONTEXT_CHARS = 1000;
@@ -202,9 +195,6 @@ export async function senninaiPrecheck(conversationId: string, userId: string, b
   if (!command) return "使い方: /senninai add（グループに参加）／ /senninai ask 質問（AIに質問）／ /senninai delete（グループから外す）";
   if (command.kind === "add") {
     if (conv.botMember) return "senninaiはすでにこのグループにいます。";
-    if (!(await featureAllowed(userId, "bot:group"))) {
-      return "senninaiをグループに入れるには、仙人ストアの拡張機能（senninaiをグループに入れる）を購入してください。";
-    }
     return null;
   }
   if (command.kind === "delete") return conv.botMember ? null : "senninaiはこのグループにいません。";
@@ -318,8 +308,6 @@ async function say(conversationId: string, body: string, replyToId: string | nul
 function textOf(row: MessageRow): string | null {
   if (row.deleted_at) return null;
   if (row.kind === "text" || row.kind === "system") return decryptText(row.body) ?? "";
-  if (row.kind === "image") return "[写真]";
-  if (row.kind === "file") return `[ファイル: ${row.file_name ?? "ファイル"}]`;
   if (row.kind === "poll") return `[投票: ${(pollDataOf(row)?.question ?? "")}]`;
   if (row.kind === "game") return "[ミニゲーム]";
   if (row.kind === "call") return "[通話]";
@@ -511,8 +499,6 @@ export async function senninaiAfterMessage(conversationId: string, userId: strin
       if (!command) return;
       if (command.kind === "add") {
         if (conv.botMember) return;
-        // 送信の前に確かめているが、念のため（拡張機能を持っていなければ何もしない）
-        if (!(await featureAllowed(userId, "bot:group"))) return;
         const { error } = await sb
           .from("sc_members")
           .upsert({ conversation_id: conversationId, user_id: BOT_ID, role: "member" }, { onConflict: "conversation_id,user_id", ignoreDuplicates: true });
@@ -571,7 +557,7 @@ async function answerInGroup(conversationId: string, userId: string, question: s
   const guard = mentioned.length
     ? "\n※人についての質問です。上の発言の内容だけを根拠に、中立に短く答えてください。推測で断定したり、個人攻撃はしないでください。"
     : "";
-  const prompt = `${await personaFor(userId)}\n\n以下はグループチャットの直近のやり取りです。\n---\n${context}${memberSection}\n---\n${asker}さんからの質問: ${question.slice(0, MAX_QUESTION_CHARS)}${guard}`;
+  const prompt = `${PERSONA}\n\n以下はグループチャットの直近のやり取りです。\n---\n${context}${memberSection}\n---\n${asker}さんからの質問: ${question.slice(0, MAX_QUESTION_CHARS)}${guard}`;
   const answer = await askAi([{ role: "user", content: prompt }]);
   await say(conversationId, answer, row.id);
 }
@@ -720,7 +706,7 @@ async function handleRead(conversationId: string, userId: string, intent: { targ
   const lines = fitTranscript(await loadLines(target.conversationId, 40), MAX_CONTEXT_CHARS);
   if (!lines.length) return say(conversationId, `「${target.label}」にはまだメッセージがありません。`);
   const question = intent.question.slice(0, MAX_QUESTION_CHARS);
-  const prompt = `${await personaFor(userId)}\n\n以下は「${target.label}」とのトーク（直近${lines.length}件）です。\n---\n${lines.join("\n")}\n---\n${question}`;
+  const prompt = `${PERSONA}\n\n以下は「${target.label}」とのトーク（直近${lines.length}件）です。\n---\n${lines.join("\n")}\n---\n${question}`;
   const answer = await askAi([{ role: "user", content: prompt }]);
   return say(conversationId, `「${target.label}」の直近${lines.length}件をもとに回答します。\n\n${answer}`);
 }
@@ -731,7 +717,7 @@ async function handleReply(conversationId: string, userId: string, name: string)
   if (!target.conversationId) return say(conversationId, `${target.label}さんとのトークはまだないので、返信案を作れません。`);
   const lines = fitTranscript(await loadLines(target.conversationId, 20), 800);
   if (!lines.length) return say(conversationId, `「${target.label}」にはまだメッセージがありません。`);
-  const prompt = `${await personaFor(userId)}\n\n以下は「${target.label}」とのトークです。\n---\n${lines.join("\n")}\n---\n最後の発言への返信案を、短い文で3つ、番号付きで出してください。`;
+  const prompt = `${PERSONA}\n\n以下は「${target.label}」とのトークです。\n---\n${lines.join("\n")}\n---\n最後の発言への返信案を、短い文で3つ、番号付きで出してください。`;
   const answer = await askAi([{ role: "user", content: prompt }]);
   return say(conversationId, `「${target.label}」への返信案です。\n\n${answer}`);
 }
@@ -756,8 +742,8 @@ async function handleChat(conversationId: string, userId: string, text: string, 
   while (history.reduce((sum, m) => sum + m.content.length, 0) > MAX_HISTORY_CHARS && history.length > 1) history.shift();
   const codeRequest = /(コード|プログラム|ソース|html|css|javascript|typescript|python|react|sql|json)/i.test(text);
   const userPrompt = codeRequest
-    ? `${await personaFor(userId)}\n\nユーザーの依頼に合わせて、実行可能なコードを生成してください。コードは必ず言語名付きのMarkdownコードフェンス（例: \`\`\`html）で囲み、コードを省略せずに出力してください。必要な説明はコードの前後に短く書いてください。複数ファイルが必要な場合はファイル名を明記して各ファイルを個別のコードブロックにしてください。\n\n依頼: ${text.slice(0, 1000)}`
-    : `${await personaFor(userId)}\n\n${text.slice(0, 1000)}`;
+    ? `${PERSONA}\n\nユーザーの依頼に合わせて、実行可能なコードを生成してください。コードは必ず言語名付きのMarkdownコードフェンス（例: \`\`\`html）で囲み、コードを省略せずに出力してください。必要な説明はコードの前後に短く書いてください。複数ファイルが必要な場合はファイル名を明記して各ファイルを個別のコードブロックにしてください。\n\n依頼: ${text.slice(0, 1000)}`
+    : `${PERSONA}\n\n${text.slice(0, 1000)}`;
   const answer = await askAi([...history, { role: "user", content: userPrompt }], codeRequest ? MAX_CODE_REPLY : MAX_REPLY);
   return say(conversationId, answer);
 }

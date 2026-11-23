@@ -3,8 +3,6 @@ import { ApiError, api, delete_, post } from "./api";
 import { Avatar } from "./Avatar";
 import { formatRemaining } from "./Banned";
 import { TEAM_ID } from "./team";
-import { StudioPanel } from "./AdminStudio";
-import { AdminPayPanel } from "./AdminPay";
 import { ManualIpModal } from "./ManualIpModal";
 
 import type { BanInfo } from "./types";
@@ -28,22 +26,17 @@ type UserDetail = UserSummary & {
   profileUrl: string;
   signupIp: string | null;
   lastIp: string | null;
-  inviteCode: string | null;
-  invitedCount: number;
   friends: UserSummary[];
   conversations: ConvSummary[];
 };
 type AdminMessage = {
   id: string;
   senderName: string;
-  kind: "text" | "image" | "file" | "contact";
+  kind: "text" | "contact";
   body: string | null;
   deleted: boolean;
   edited: boolean;
   createdAt: string;
-  fileName: string | null;
-  imageUrl: string | null;
-  fileUrl: string | null;
 };
 type Unit = "minutes" | "hours" | "days";
 
@@ -177,7 +170,7 @@ function AdminLogin({ onDone }: { onDone: () => void }) {
 type Go = (to: string) => void;
 
 function Dashboard({ go }: { go: Go }) {
-  const [tab, setTab] = useState<"users" | "chats" | "news" | "studio" | "pay" | "maintenance" | "ip">("users");
+  const [tab, setTab] = useState<"users" | "chats" | "news" | "maintenance" | "ip">("users");
   return (
     <>
       <div className="admin-segment" role="tablist">
@@ -189,12 +182,6 @@ function Dashboard({ go }: { go: Go }) {
         </button>
         <button role="tab" aria-selected={tab === "news"} className={tab === "news" ? "on" : ""} onClick={() => setTab("news")}>
           お知らせ
-        </button>
-        <button role="tab" aria-selected={tab === "studio"} className={tab === "studio" ? "on" : ""} onClick={() => setTab("studio")}>
-          作品
-        </button>
-        <button role="tab" aria-selected={tab === "pay"} className={tab === "pay" ? "on" : ""} onClick={() => setTab("pay")}>
-          ストア・Pay
         </button>
         <button role="tab" aria-selected={tab === "maintenance"} className={tab === "maintenance" ? "on" : ""} onClick={() => setTab("maintenance")}>
           メンテナンス
@@ -209,10 +196,6 @@ function Dashboard({ go }: { go: Go }) {
         <ChatsList go={go} />
       ) : tab === "news" ? (
         <AnnouncementPanel />
-      ) : tab === "studio" ? (
-        <StudioPanel />
-      ) : tab === "pay" ? (
-        <AdminPayPanel />
       ) : tab === "ip" ? (
         <IpBanPanel />
       ) : (
@@ -874,10 +857,6 @@ function IpPanel({ user, onChanged, onError }: { user: UserDetail; onChanged: (m
           <dt>最後のログインのIP</dt>
           <dd>{user.lastIp ?? "未記録"}</dd>
         </div>
-        <div>
-          <dt>招待コード</dt>
-          <dd>{user.inviteCode ?? "—"}（招待した人 {user.invitedCount}人）</dd>
-        </div>
       </dl>
       <div className="admin-ip-actions">
         <button className="btn-secondary" disabled={busy || !user.lastIp} onClick={() => void ban("last")}>
@@ -1122,12 +1101,6 @@ function ChatPage({ id, go }: { id: string; go: Go }) {
             </div>
             {m.deleted ? (
               <p className="deleted">送信を取り消しました</p>
-            ) : m.kind === "image" && m.imageUrl ? (
-              <img src={m.imageUrl} alt="画像" loading="lazy" />
-            ) : m.kind === "file" && m.fileUrl ? (
-              <a href={m.fileUrl} download={m.fileName ?? undefined}>
-                {m.fileName ?? "ファイル"}
-              </a>
             ) : m.kind === "contact" ? (
               <p className="muted">（連絡先）</p>
             ) : (

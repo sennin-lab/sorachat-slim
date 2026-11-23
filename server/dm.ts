@@ -4,7 +4,7 @@ import { currentUserId, requireAuth } from "./auth.js";
 import { friendIdsOf, friendshipOf } from "./friends.js";
 import { avatarVersionOf } from "./avatarVersion.js";
 import { decryptText, encryptText } from "./crypto.js";
-import { fileNameOf, FILE_LIMIT, isAllowedImage, readImage, removeImage, saveFile, saveImage, upload, uploadFile } from "./media.js";
+import { isAllowedImage, readImage, removeImage, saveImage, upload } from "./media.js";
 import {
   COLUMNS,
   UUID,
@@ -27,7 +27,6 @@ import {
   purgeConversation,
   insertMessage,
   membership,
-  removeImageIfUnused,
   replyTargetOk,
   summarize,
   toMessage,
@@ -36,9 +35,6 @@ import {
   type PollVote
 } from "./messages.js";
 import { aiEnabledFor, BOT_ID, senninaiAfterMessage, senninaiPrecheck } from "./senninai.js";
-import { stampRefOk } from "./stamps.js";
-import { featureAllowed, stampLocked } from "./storeAccess.js";
-import { normalizeStampRef } from "./stampRef.js";
 import { createGame, gameAction, gameViewsFor } from "./games.js";
 import { GAME_KINDS, GameError } from "./gameLogic.js";
 import { sb } from "./supabase.js";
@@ -51,16 +47,14 @@ const USERNAME = /^[a-z0-9_]{3,20}$/;
 export const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 type Role = "owner" | "member";
-type MessageWithPath = MessageRow & { image_path: string | null; file_path: string | null };
-
-const messageRow = async (messageId: string): Promise<MessageWithPath | null> => {
+const messageRow = async (messageId: string): Promise<MessageRow | null> => {
   const { data, error } = await sb
     .from("sc_messages")
-    .select(`${COLUMNS}, image_path, file_path`)
+    .select(COLUMNS)
     .eq("id", messageId)
     .maybeSingle();
   if (error) throw error;
-  return (data as MessageWithPath | null) ?? null;
+  return (data as MessageRow | null) ?? null;
 };
 
 // 返信先のIDを確かめる。返信しない場合は null、同じ会話にない・壊れたIDは undefined（400にする）
@@ -605,53 +599,6 @@ dm.post("/dm/:id/messages", async (req, res) => {
   res.status(201).json(toMessage(row, [], parsed.data.clientId ?? null));
 });
 
-dm.post("/dm/:id/image", upload.single("file"), async (req, res) => {
-  const id = String(req.params.id);
-  const me = currentUserId(res);
-  if (!(await membership(id, me))) {
-    res.status(404).json({ error: "会話が見つかりません。" });
-    return;
-  }
-  if (!isAllowedImage(req.file)) {
-    res.status(415).json({ error: "JPEG・PNG・WebP・GIF の画像を選んでください。" });
-    return;
-  }
-  const replyToId = await replyFrom(id, req.body?.replyToId);
-  if (replyToId === undefined) {
-    res.status(400).json({ error: "返信先のメッセージが見つかりません。" });
-    return;
-  }
-  const path = await saveImage(req.file!, `dm/${id}`);
-  const row = await insertMessage(id, me, { kind: "image", imagePath: path }, "写真", { replyToId });
-  res.status(201).json(toMessage(row, []));
-});
-
-// スタンプ（画像とは別の種類。組み込みは builtin:ファイル名、自分のものは user:ID）
-dm.post("/dm/:id/stamp", async (req, res) => {
-  const id = String(req.params.id);
-  const me = currentUserId(res);
-  if (!(await membership(id, me))) {
-    res.status(404).json({ error: "会話が見つかりません。" });
-    return;
-  }
-  const stampRef = normalizeStampRef(typeof req.body?.stampRef === "string" ? req.body.stampRef : "");
-  if (await stampLocked(stampRef, me)) {
-    res.status(403).json({ error: "このスタンプは仙人ストアのスタンプパックに入っています。購入すると送れます。" });
-    return;
-  }
-  if (!(await stampRefOk(stampRef, me))) {
-    res.status(400).json({ error: "スタンプが見つかりません。" });
-    return;
-  }
-  const replyToId = await replyFrom(id, req.body?.replyToId);
-  if (replyToId === undefined) {
-    res.status(400).json({ error: "返信先のメッセージが見つかりません。" });
-    return;
-  }
-  const row = await insertMessage(id, me, { kind: "stamp", stampRef }, "スタンプ", { replyToId });
-  res.status(201).json(toMessage(row, []));
-});
-
 dm.post("/dm/:id/read", async (req, res) => {
   const id = String(req.params.id);
   const me = currentUserId(res);
@@ -750,12 +697,10 @@ dm.delete("/dm/messages/:messageId", async (req, res) => {
   const deletedAt = new Date().toISOString();
   const { error } = await sb
     .from("sc_messages")
-    .update({ deleted_at: deletedAt, body: null, image_path: null, file_path: null, contact_user_id: null })
+    .update({ deleted_at: deletedAt, body: null, contact_user_id: null })
     .eq("id", messageId);
   if (error) throw error;
   await sb.from("sc_reactions").delete().eq("message_id", messageId);
-  if (msg.image_path) await removeImageIfUnused(msg.image_path);
-  if (msg.file_path) await removeImageIfUnused(msg.file_path);
   await sb
     .from("sc_conversations")
     .update({ last_preview: encryptText("送信を取り消しました") })
@@ -832,11 +777,6 @@ dm.post("/dm/:id/game", async (req, res) => {
   const parsed = gameCreateSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "ゲームを選んでください。" });
-    return;
-  }
-  // 拡張機能として売っているゲームは、買った人だけ作れる
-  if (!(await featureAllowed(me, `game:${parsed.data.kind}`))) {
-    res.status(403).json({ error: "このミニゲームは仙人ストアの拡張機能です。ストアで購入すると遊べます。" });
     return;
   }
   const row = await createGame(id, me, parsed.data.kind);
@@ -959,20 +899,8 @@ dm.post("/dm/messages/:messageId/forward", async (req, res) => {
   }
   // 元のメッセージは暗号化されているので、転送する前に復号する
   let content: Content = { kind: "text", body: decryptText(source.body) ?? "" };
-  if (source.kind === "image" && source.image_path) {
-    content = { kind: "image", imagePath: source.image_path };
-  } else if (source.kind === "file" && source.file_path) {
-    content = { kind: "file", filePath: source.file_path, fileName: source.file_name ?? "file", fileSize: Number(source.file_size ?? 0) };
-  } else if (source.kind === "contact" && source.contact_user_id) {
+  if (source.kind === "contact" && source.contact_user_id) {
     content = { kind: "contact", contactUserId: source.contact_user_id };
-  } else if (source.kind === "stamp" && (source.stamp_ref || source.body)) {
-    // スタンプは本文を持たないので、スタンプの参照をそのまま転送する（古い行は正規化してから）
-    const ref = normalizeStampRef(source.stamp_ref ?? decryptText(source.body) ?? "");
-    if (!(await stampRefOk(ref, me))) {
-      res.status(400).json({ error: "このスタンプは送信できません。" });
-      return;
-    }
-    content = { kind: "stamp", stampRef: ref };
   }
   if (content.kind === "text" && !content.body) {
     res.status(400).json({ error: "このメッセージは送信できません。" });
@@ -986,45 +914,8 @@ dm.post("/dm/messages/:messageId/forward", async (req, res) => {
 // 送信するメッセージの一覧表示用の短い説明
 function previewOf(content: Content) {
   if (content.kind === "text") return content.body;
-  if (content.kind === "image") return "写真";
-  if (content.kind === "stamp") return "スタンプ";
-  if (content.kind === "file") return `ファイル: ${content.fileName}`.slice(0, 80);
   return "連絡先";
 }
-
-// ファイル添付（画像以外のすべて・20MBまで）
-dm.post("/dm/:id/file", uploadFile.single("file"), async (req, res) => {
-  const id = String(req.params.id);
-  const me = currentUserId(res);
-  if (!(await membership(id, me))) {
-    res.status(404).json({ error: "会話が見つかりません。" });
-    return;
-  }
-  const file = req.file;
-  if (!file || file.size === 0) {
-    res.status(400).json({ error: "ファイルを選んでください。" });
-    return;
-  }
-  if (file.size > FILE_LIMIT) {
-    res.status(413).json({ error: "ファイルは20MB以下にしてください。" });
-    return;
-  }
-  const replyToId = await replyFrom(id, req.body?.replyToId);
-  if (replyToId === undefined) {
-    res.status(400).json({ error: "返信先のメッセージが見つかりません。" });
-    return;
-  }
-  const name = fileNameOf(file);
-  const path = await saveFile(file, `dm/${id}/files`);
-  const row = await insertMessage(
-    id,
-    me,
-    { kind: "file", filePath: path, fileName: name, fileSize: file.size },
-    previewOf({ kind: "file", filePath: path, fileName: name, fileSize: file.size }),
-    { replyToId }
-  );
-  res.status(201).json((await withReactions([row], me))[0]);
-});
 
 // 連絡先（SoraChatのユーザー）を送る
 const contactSchema = z.object({
@@ -1064,88 +955,3 @@ dm.post("/dm/:id/contact", async (req, res) => {
   res.status(201).json((await withReactions([row], me))[0]);
 });
 
-// ファイルのダウンロード（常に添付として返し、ブラウザでの実行を防ぐ）
-dm.get("/dm/messages/:messageId/file", async (req, res) => {
-  const messageId = String(req.params.messageId);
-  const { data, error } = await sb
-    .from("sc_messages")
-    .select("conversation_id, file_path, file_name, deleted_at")
-    .eq("id", messageId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data?.file_path || data.deleted_at || !(await membership(data.conversation_id as string, currentUserId(res)))) {
-    res.status(404).json({ error: "ファイルが見つかりません。" });
-    return;
-  }
-  const file = await readImage(data.file_path as string);
-  if (!file) {
-    res.status(404).json({ error: "ファイルが見つかりません。" });
-    return;
-  }
-  const name = String(data.file_name ?? "file");
-  res.setHeader("content-type", "application/octet-stream");
-  res.setHeader("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
-  res.setHeader("x-content-type-options", "nosniff");
-  res.send(file.buffer);
-});
-
-// トークの中で表示するためのファイル（PDF と、テキスト系のファイル）。それ以外は 415 を返す
-// 中身も確かめる（PDF は %PDF- で始まる、テキストは NUL を含まない）。ダウンロードは従来の /file を使う
-const TEXT_VIEW_EXTENSIONS = new Set(["txt", "md", "csv", "log", "json"]);
-dm.get("/dm/messages/:messageId/file/view", async (req, res) => {
-  const messageId = String(req.params.messageId);
-  if (!UUID.test(messageId)) {
-    res.status(404).json({ error: "ファイルが見つかりません。" });
-    return;
-  }
-  const { data, error } = await sb
-    .from("sc_messages")
-    .select("conversation_id, file_path, file_name, deleted_at")
-    .eq("id", messageId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data?.file_path || data.deleted_at || !(await membership(data.conversation_id as string, currentUserId(res)))) {
-    res.status(404).json({ error: "ファイルが見つかりません。" });
-    return;
-  }
-  const file = await readImage(data.file_path as string);
-  if (!file) {
-    res.status(404).json({ error: "ファイルが見つかりません。" });
-    return;
-  }
-  const name = String(data.file_name ?? "file");
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  const buffer = file.buffer;
-  const isPdf = ext === "pdf" && buffer.subarray(0, 5).equals(Buffer.from("%PDF-"));
-  const isText = TEXT_VIEW_EXTENSIONS.has(ext) && !buffer.subarray(0, 8000).includes(0) && buffer.length <= 5 * 1024 * 1024;
-  if (!isPdf && !isText) {
-    res.status(415).json({ error: "このファイルはトークの中では表示できません。" });
-    return;
-  }
-  res.setHeader("content-type", isPdf ? "application/pdf" : "text/plain; charset=utf-8");
-  res.setHeader("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(name)}`);
-  res.setHeader("x-content-type-options", "nosniff");
-  res.setHeader("cache-control", "private, no-cache");
-  res.send(buffer);
-});
-
-dm.get("/dm/messages/:messageId/image", async (req, res) => {
-  const messageId = String(req.params.messageId);
-  if (!UUID.test(messageId)) {
-    res.status(404).end();
-    return;
-  }
-  const { data } = await sb.from("sc_messages").select("conversation_id, image_path").eq("id", messageId).maybeSingle();
-  if (!data?.image_path || !(await membership(data.conversation_id as string, currentUserId(res)))) {
-    res.status(404).end();
-    return;
-  }
-  const image = await readImage(data.image_path as string);
-  if (!image) {
-    res.status(404).end();
-    return;
-  }
-  res.setHeader("content-type", image.type);
-  res.setHeader("cache-control", "private, max-age=86400");
-  res.send(image.buffer);
-});

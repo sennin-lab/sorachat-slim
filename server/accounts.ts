@@ -9,14 +9,12 @@ import { avatarVersionOf } from "./avatarVersion.js";
 import { disableAi, enableAi } from "./senninai.js";
 import { sb } from "./supabase.js";
 import { befriendTeam } from "./team.js";
-import { attachSenninAccount, SenninError } from "./senninPoints.js";
-import { grantLoginBonus } from "./loginBonus.js";
-import { retryCreatorPayouts } from "./studioPayout.js";
 import { requestIp, manualIp, isIpBanned } from "./ipBans.js";
-import { withKeyedLock } from "./keyedLock.js";
-import { checkInvite, findInviterId, normalizeInviteCode, recordReferral, REFERRAL_ON, ReferralError, retryPendingReferrals } from "./referral.js";
 
 export const accounts = Router();
+
+// 仙人アカウントのログインの失敗（画面に出すメッセージ）
+class SenninError extends Error {}
 
 const hits = new Map<string, { count: number; reset: number }>();
 const authLimit = (req: Request, res: Response, next: NextFunction) => {
@@ -52,8 +50,6 @@ const registerSchema = z.object({
   username: usernameSchema,
   password: passwordSchema,
   displayName: nameSchema,
-  // 招待コード（任意）。招待されて登録するとき、招待した人とされた人に報酬が付く
-  inviteCode: z.string().max(16).optional(),
   // IP が取得できなかったときだけ、利用者が手入力する IP
   manualIp: z.string().max(64).optional()
 });
@@ -75,30 +71,6 @@ const updateMeSchema = z.object({
   aiEnabled: z.boolean().optional()
 });
 
-// 買った外観が作品の場合は、その配色（色の値）を返す（画面の色に反映するため）
-async function studioPaletteOf(themeId: string | null): Promise<{ mine: string; bg: string; accent: string } | null> {
-  if (!themeId?.startsWith("work:")) return null;
-  const id = themeId.slice("work:".length);
-  if (!UUID.test(id)) return null;
-  const { data } = await sb.from("sc_studio_works").select("payload, status").eq("id", id).maybeSingle();
-  if (!data || data.status === "removed") return null;
-  const payload = data.payload as { mine?: string; bg?: string; accent?: string } | null;
-  return payload?.mine && payload.bg && payload.accent ? { mine: payload.mine, bg: payload.bg, accent: payload.accent } : null;
-}
-
-// 仙人ストアの情報（任意の機能）。マイグレーション未実行などで読めなくても、ログインは止めない
-async function optionalStoreFields(userId: string): Promise<{ storeTheme: string | null; storeThemePalette: { mine: string; bg: string; accent: string } | null }> {
-  try {
-    const { data, error } = await sb.from("sc_users").select("store_theme").eq("id", userId).maybeSingle();
-    if (error) throw error;
-    const storeTheme = (data?.store_theme ?? null) as string | null;
-    return { storeTheme, storeThemePalette: await studioPaletteOf(storeTheme).catch(() => null) };
-  } catch (error) {
-    console.error("[me] 仙人ストアの情報を読めませんでした（ログインには影響しません）:", error);
-    return { storeTheme: null, storeThemePalette: null };
-  }
-}
-
 async function loadMe(userId: string) {
   // ログインに必要な列だけで読む（ここが失敗するとログインできなくなるため、新しい列は含めない）
   const { data, error } = await sb
@@ -108,7 +80,6 @@ async function loadMe(userId: string) {
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  const store = await optionalStoreFields(userId);
   return {
     id: data.id as string,
     username: data.username as string,
@@ -121,9 +92,7 @@ async function loadMe(userId: string) {
     notifyDm: data.notify_dm as boolean,
     sennin: Boolean(data.sennin_id),
     coverTheme: (data.cover_theme ?? "green") as string,
-    aiEnabled: Boolean(data.ai_enabled),
-    storeTheme: store.storeTheme,
-    storeThemePalette: store.storeThemePalette
+    aiEnabled: Boolean(data.ai_enabled)
   };
 }
 
@@ -158,34 +127,10 @@ accounts.post("/auth/register", authLimit, async (req, res) => {
     return;
   }
   const { username, password, displayName } = parsed.data;
-  const code = normalizeInviteCode(parsed.data.inviteCode);
-  let inviterId: string | null = null;
-  if (code && REFERRAL_ON) {
-    inviterId = await findInviterId(code);
-    if (!inviterId) {
-      res.status(400).json({ error: "招待コードが見つかりません。" });
-      return;
-    }
-  }
   let userId: string;
   try {
-    if (inviterId) {
-      // 同じ招待者への登録は1件ずつ確かめる（同時に来ても、同じ回線からの2件目は必ず弾く）
-      const inviter = inviterId;
-      userId = await withKeyedLock(`referral:${inviter}`, async () => {
-        await checkInvite(inviter, ip);
-        const id = await createUser(username, password, displayName, ip);
-        await recordReferral(inviter, id, null, ip);
-        return id;
-      });
-    } else {
-      userId = await createUser(username, password, displayName, ip);
-    }
+    userId = await createUser(username, password, displayName, ip);
   } catch (error) {
-    if (error instanceof ReferralError) {
-      res.status(400).json({ error: error.message });
-      return;
-    }
     if ((error as { code?: string })?.code === "23505") {
       res.status(409).json({ error: "そのユーザー名は使われています。" });
       return;
@@ -195,7 +140,6 @@ accounts.post("/auth/register", authLimit, async (req, res) => {
   // 新しい人には、開発チームを友だちに追加しておく（お知らせを受け取れるように）
   await befriendTeam(userId).catch((error) => console.error("開発チームの友だち追加に失敗しました", error));
   await startSession(res, userId);
-  void retryPendingReferrals(userId);
   res.json({ ok: true });
 });
 
@@ -221,7 +165,6 @@ accounts.post("/auth/login", authLimit, async (req, res) => {
     if (ipError) console.error("[login] 最後の IP を保存できませんでした:", ipError);
   }
   await startSession(res, data as string);
-  void retryPendingReferrals(data as string);
   res.json({ ok: true });
 });
 
@@ -283,37 +226,6 @@ accounts.get("/auth/options", (_req, res) => {
   res.json({ sennin: Boolean(clientId && authorizationUrl && tokenUrl && redirectUri) });
 });
 
-// 連携の後に戻るページ（仙人ストア・senninstudio は、それぞれ専用のページ）
-const linkReturnPath = (value: unknown) =>
-  value === "studio" ? "/studio" : value === "pay" ? "/pay" : value === "games" ? "/senningames" : "/store";
-type LinkFrom = "store" | "studio" | "pay" | "games";
-const linkFromOf = (value: unknown): LinkFrom =>
-  value === "studio" ? "studio" : value === "pay" ? "pay" : value === "games" ? "games" : "store";
-
-accounts.get("/auth/sennin/link", requireAuth, (req, res) => {
-  const { clientId, authorizationUrl, redirectUri, storeScope } = config.sennin;
-  const from = linkFromOf(req.query.from);
-  if (!clientId || !authorizationUrl) {
-    console.error(`[sennin] 仙人アカウントの設定が足りません: ${missingSenninSettings().join("、")}`);
-    res.redirect(`${config.appOrigin}${linkReturnPath(from)}?store_error=${encodeURIComponent("仙人アカウントは現在利用できません。")}`);
-    return;
-  }
-  const state = randomToken(24);
-  const verifier = randomToken(48);
-  const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
-  res.cookie("sc_oauth", `${state}.${verifier}`, { ...cookieBase, maxAge: 10 * 60 * 1000 });
-  res.cookie("sc_oauth_link", from, { ...cookieBase, maxAge: 10 * 60 * 1000 });
-  const url = new URL(authorizationUrl);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("client_id", clientId);
-  url.searchParams.set("redirect_uri", redirectUri);
-  url.searchParams.set("scope", storeScope);
-  url.searchParams.set("state", state);
-  url.searchParams.set("code_challenge", challenge);
-  url.searchParams.set("code_challenge_method", "S256");
-  res.redirect(url.toString());
-});
-
 // 認可コードをトークンに交換する（ログインと連携で共通）
 async function exchangeSenninCode(code: string, verifier: string) {
   const headers: Record<string, string> = {
@@ -342,18 +254,12 @@ async function exchangeSenninCode(code: string, verifier: string) {
 }
 
 accounts.get("/auth/sennin/callback", async (req, res) => {
-  // 連携のときは、連携を始めたページ（仙人ストアか senninstudio）へ戻って、結果を出す
-  const linkCookie = req.cookies?.sc_oauth_link;
-  const linking = typeof linkCookie === "string" && linkCookie !== "";
-  const returnPath = linkReturnPath(linkCookie);
   const fail = (message: string) => {
     res.clearCookie("sc_oauth", cookieBase);
-    res.clearCookie("sc_oauth_link", cookieBase);
-    const target = linking ? `${config.appOrigin}${returnPath}?store_error=` : `${config.appOrigin}/?auth_error=`;
-    res.redirect(`${target}${encodeURIComponent(message)}`);
+    res.redirect(`${config.appOrigin}/?auth_error=${encodeURIComponent(message)}`);
   };
   if (typeof req.query.error === "string") {
-    fail(linking ? "仙人アカウントで許可されませんでした。ポイントの利用を許可してください。" : "仙人アカウントでの認証がキャンセルされました。");
+    fail("仙人アカウントでの認証がキャンセルされました。");
     return;
   }
   const code = typeof req.query.code === "string" ? req.query.code : "";
@@ -366,39 +272,9 @@ accounts.get("/auth/sennin/callback", async (req, res) => {
   try {
     const tokenData = await exchangeSenninCode(code, verifier);
     const profile = await fetchSenninProfile(tokenData.access_token);
-    if (linking) {
-      const userId = await sessionUserId(req.cookies?.[SESSION_COOKIE]);
-      if (!userId) {
-        fail("ログインし直してから、もう一度お試しください。");
-        return;
-      }
-      if (typeof tokenData.refresh_token !== "string") {
-        fail("仙人アカウントから更新用の情報を受け取れませんでした。もう一度お試しください。");
-        return;
-      }
-      await attachSenninAccount(userId, profile.id, tokenData.refresh_token);
-      // 連携できたので、保留になっていた作者への支払いと招待の報酬を払う（なければ何もない）
-      void retryCreatorPayouts(userId).catch((error) => console.error("[studio] 支払いの再送に失敗:", error));
-      void retryPendingReferrals(userId);
-      res.clearCookie("sc_oauth", cookieBase);
-      res.clearCookie("sc_oauth_link", cookieBase);
-      res.redirect(`${config.appOrigin}${returnPath}?store=linked`);
-      return;
-    }
     const userId = await upsertSenninUser(profile.id, profile.name);
     await befriendTeam(userId).catch((error) => console.error("開発チームの友だち追加に失敗しました", error));
-    // ログインの許可でポイントの更新用の情報も受け取れたら、連携済みにして初回のログイン特典を付ける
-    if (config.sennin.loginBonus && typeof tokenData.refresh_token === "string") {
-      try {
-        await attachSenninAccount(userId, profile.id, tokenData.refresh_token);
-        void grantLoginBonus(userId).catch((error) => console.error("[bonus] ログイン特典を付与できませんでした（次回のログインで再試行します）:", error));
-        void retryPendingReferrals(userId);
-      } catch (error) {
-        console.error("[sennin] ログインで連携情報を保存できませんでした:", error);
-      }
-    }
     res.clearCookie("sc_oauth", cookieBase);
-    res.clearCookie("sc_oauth_link", cookieBase);
     await startSession(res, userId);
     res.redirect(`${config.appOrigin}/`);
   } catch (error) {

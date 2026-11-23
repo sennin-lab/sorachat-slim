@@ -22,19 +22,15 @@ import { GroupSheet } from "./GroupSheet";
 import { getCallState, joinCallFromChat, startGroupCall } from "./groupCall";
 import { CallCard } from "./CallCard";
 import { Icon } from "./Icon";
-import { ImageViewer } from "./ImageViewer";
 import { MessageMenu } from "./MessageMenu";
 import { isSocketOpen, onChatEvent, sendChat, sendGameAction, sendTyping } from "./realtime";
 import { UserProfileSheet } from "./UserProfileSheet";
 import { AttachSheet } from "./AttachSheet";
-import { StampSheet } from "./StampSheet";
-import { stampNameOf, stampUrlOf } from "./stamps";
 import { PREFS_EVENT, getShowUnsent } from "./prefs";
 import { ContactSheet } from "./ContactSheet";
 import { PollCard } from "./PollCard";
 import { PollSheet, type PollDraft } from "./PollSheet";
 import { PollScreen } from "./PollScreen";
-import { FileViewer, viewerKindOf } from "./FileViewer";
 import { GameCard } from "./GameCard";
 import { GameSheet } from "./GameSheet";
 import { RichText } from "./LinkText";
@@ -44,12 +40,6 @@ import type { Conversation, FriendshipState, GameKind, Member, Message } from ".
 
 type ContactInfo = NonNullable<Message["contact"]>;
 
-const formatSize = (bytes?: number | null) => {
-  if (!bytes) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-};
 const PAGE_SIZE = 50;
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -60,24 +50,12 @@ const errorText = (err: unknown) =>
 // 返信元や入力欄の上に出す、メッセージ1件の短い説明
 const messagePreview = (m: Message) => {
   if (m.deleted) return "送信を取り消しました";
-  if (m.kind === "image") return "写真";
-  if (m.kind === "file") return m.fileName ?? "ファイル";
   if (m.kind === "contact") return `連絡先 ${m.contact?.displayName ?? ""}`.trim();
-  if (m.kind === "stamp") return "スタンプ";
   if (m.kind === "poll") return `投票: ${m.body ?? ""}`;
   if (m.kind === "game") return "ミニゲーム";
   if (m.kind === "call") return "通話";
   // 「\n」という文字のまま届いた改行は、一行の説明では空白にする
   return clipLongWords((m.body ?? "").replace(/\\n/g, " "));
-};
-
-const downloadFile = (url: string, name?: string | null) => {
-  const link = document.createElement("a");
-  link.href = url;
-  if (name) link.download = name;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
 };
 
 type Reader = { id: string; lastReadAt: string };
@@ -192,10 +170,8 @@ export function ChatView({
   // 新しく届いた・送った吹き出しだけ、出現アニメーションを付ける
   const enterIds = useRef(new Set<string>());
   // ハートを送ったときに浮かぶハートの一覧
-  const [stampOpen, setStampOpen] = useState(false);
   const [editing, setEditing] = useState<Message | null>(null);
   const [forwarding, setForwarding] = useState<Message | null>(null);
-  const [viewing, setViewing] = useState<Message | null>(null);
   const [showInfo, setShowInfo] = useState(false);
   const [showRoom, setShowRoom] = useState(false);
   const navigate = useNavigate();
@@ -206,9 +182,8 @@ export function ChatView({
   const [contactOpen, setContactOpen] = useState(false);
   const [contactUser, setContactUser] = useState<ContactInfo | null>(null);
   const [pollOpen, setPollOpen] = useState(false);
-  // 全画面で開いている投票（メッセージID）と、トーク内で開いているファイル
+  // 全画面で開いている投票（メッセージID）
   const [pollViewingId, setPollViewingId] = useState<string | null>(null);
-  const [fileViewing, setFileViewing] = useState<Message | null>(null);
   const [gameOpen, setGameOpen] = useState(false);
   // 「送信取り消しました」を表示するか（設定で切り替える）
   const [showUnsent, setShowUnsent] = useState(getShowUnsent);
@@ -222,8 +197,6 @@ export function ChatView({
   const messagesRef = useRef(messages);
   const formRef = useRef<HTMLFormElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const anyFileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const prependHeight = useRef<number | null>(null);
@@ -233,7 +206,6 @@ export function ChatView({
   const lastTap = useRef<{ id: string; at: number }>({ id: "", at: 0 });
   // 連打による二重送信を防ぐ（同じ内容を短時間に送らない）
   const lastSend = useRef<{ body: string; at: number }>({ body: "", at: 0 });
-  const lastStamp = useRef<{ ref: string; at: number }>({ ref: "", at: 0 });
   const [leaving, setLeaving] = useState(false);
   // 返信先（入力欄の上に表示し、次に送るメッセージに付ける）
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -383,7 +355,7 @@ export function ChatView({
         return;
       }
       if (event.type === "message_deleted" && event.conversationId === conversationId) {
-        patchMessage(event.id, (m) => ({ ...m, deleted: true, body: null, imageUrl: null, reactions: [] }));
+        patchMessage(event.id, (m) => ({ ...m, deleted: true, body: null, reactions: [] }));
         return;
       }
       if (event.type === "reactions" && event.conversationId === conversationId) {
@@ -532,24 +504,6 @@ export function ChatView({
     window.setTimeout(onBack, 220);
   };
 
-  const sendStamp = async (stampRef: string) => {
-    const now = Date.now();
-    if (stampRef === lastStamp.current.ref && now - lastStamp.current.at < 600) return;
-    lastStamp.current = { ref: stampRef, at: now };
-    setStampOpen(false);
-    if (editing) return;
-    const replyId = replyTo?.id ?? null;
-    setReplyTo(null);
-    setError("");
-    try {
-      const message = await api<Message>(`/api/dm/${conversationId}/stamp`, post({ stampRef, replyToId: replyId }));
-      upsert([message]);
-      onActivity();
-    } catch (err) {
-      setError(errorText(err));
-    }
-  };
-
   const enqueue = (body: string) => {
     const now = Date.now();
     if (body === lastSend.current.body && now - lastSend.current.at < 600) return;
@@ -563,7 +517,6 @@ export function ChatView({
       senderId: meId,
       kind: "text",
       body,
-      imageUrl: null,
       createdAt: new Date().toISOString(),
       edited: false,
       deleted: false,
@@ -590,38 +543,6 @@ export function ChatView({
       event.preventDefault();
       formRef.current?.requestSubmit();
     }
-  };
-
-  // 画像・ファイルを送る（同じ形で送信し、返ってきたメッセージを表示する）
-  const uploadFile = async (path: "image" | "file", file: File) => {
-    const replyId = replyTo?.id ?? null;
-    setReplyTo(null);
-    setBusy(true);
-    setError("");
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      if (replyId) form.append("replyToId", replyId);
-      const message = await api<Message>(`/api/dm/${conversationId}/${path}`, { method: "POST", body: form });
-      upsert([message]);
-      onActivity();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const pickImage = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (file) void uploadFile("image", file);
-  };
-
-  const pickAnyFile = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (file) void uploadFile("file", file);
   };
 
   const shareContact = async (username: string) => {
@@ -757,7 +678,7 @@ export function ChatView({
     if (!window.confirm("このメッセージを送信取り消ししますか？")) return;
     try {
       await api(`/api/dm/messages/${m.id}`, delete_());
-      patchMessage(m.id, (x) => ({ ...x, deleted: true, body: null, imageUrl: null, reactions: [] }));
+      patchMessage(m.id, (x) => ({ ...x, deleted: true, body: null, reactions: [] }));
       onActivity();
     } catch (err) {
       setError(errorText(err));
@@ -777,13 +698,10 @@ export function ChatView({
     }
   };
 
-  // 1回タップの動き（画像は拡大、連絡先はプロフィール、ファイルはダウンロード）。
+  // 1回タップの動き（連絡先はプロフィール、投票は全画面）。
   // ダブルタップと区別するため、少し待ってから実行する
   const singleTapAction = (m: Message): (() => void) | null => {
-    if (m.kind === "image" && m.imageUrl) return () => setViewing(m);
     if (m.kind === "contact" && m.contact) return () => setContactUser(m.contact ?? null);
-    // PDF やテキストはトークの中で開く。それ以外のファイルはダウンロード
-    if (m.kind === "file" && m.fileUrl) return () => (viewerKindOf(m.fileName) ? setFileViewing(m) : downloadFile(m.fileUrl!, m.fileName));
     if (m.kind === "poll" && m.poll) return () => setPollViewingId(m.id);
     return null;
   };
@@ -992,8 +910,6 @@ export function ChatView({
           }
           const mine = m.senderId === meId;
           const replyTarget = m.replyToId ? byId.get(m.replyToId) : undefined;
-          const showImage = m.kind === "image" && !m.deleted && m.imageUrl;
-          const showStamp = m.kind === "stamp" && !m.deleted && Boolean(m.stampRef);
           const hasStatus = Boolean(m.status) || (m.edited && !m.deleted);
           const sender = people.get(m.senderId);
           const avatarName = isGroup ? sender?.name ?? "" : conversation?.name ?? "";
@@ -1056,7 +972,7 @@ export function ChatView({
                   <div className="bubble-line">
                     {mine && meta}
                     <div
-                      className={`bubble ${showImage ? "image" : ""} ${showStamp ? "stamp" : ""} ${m.kind === "poll" && m.poll && !m.deleted ? "poll" : ""} ${m.kind === "game" && !m.deleted ? "game" : ""} ${m.deleted ? "deleted" : ""} ${m.status ? "pending" : ""} ${hasStatus ? "has-status" : ""}`}
+                      className={`bubble ${m.kind === "poll" && m.poll && !m.deleted ? "poll" : ""} ${m.kind === "game" && !m.deleted ? "game" : ""} ${m.deleted ? "deleted" : ""} ${m.status ? "pending" : ""} ${hasStatus ? "has-status" : ""}`}
                       onContextMenu={(e) => e.preventDefault()}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -1065,35 +981,6 @@ export function ChatView({
                     >
                       {m.deleted ? (
                         <p className="unsent">送信を取り消しました</p>
-                      ) : showImage ? (
-                        <img src={m.imageUrl!} alt="送信された画像" loading="lazy" draggable={false} />
-                      ) : m.kind === "stamp" && m.stampRef && stampUrlOf(m.stampRef) ? (
-                        <img
-                          className="stamp-img"
-                          src={stampUrlOf(m.stampRef)!}
-                          alt="スタンプ"
-                          loading="lazy"
-                          decoding="async"
-                        />
-                      ) : m.kind === "stamp" ? (
-                        // 画像が見つからない古いスタンプは、文字コードの名前を出さずに「スタンプ」と表示する
-                        <p className="stamp-missing">{m.stampRef?.startsWith("builtin:") ? `スタンプ（${stampNameOf(m.stampRef)}）` : "スタンプ"}</p>
-                      ) : m.kind === "file" && m.fileUrl ? (
-                        <a
-                          className="file-card"
-                          href={m.fileUrl}
-                          download={m.fileName ?? undefined}
-                          onClick={(e) => e.preventDefault()}
-                        >
-                          <Icon name="file" size={28} />
-                          <span className="file-text">
-                            <strong>{m.fileName}</strong>
-                            <small>
-                            {formatSize(m.fileSize)}
-                            {viewerKindOf(m.fileName) ? " ・ タップで表示" : ""}
-                          </small>
-                          </span>
-                        </a>
                       ) : m.kind === "contact" && m.contact ? (
                         <button type="button" className="contact-card">
                           <Avatar userId={m.contact.id} hasAvatar={m.contact.hasAvatar} name={m.contact.displayName} size={40} />
@@ -1217,8 +1104,6 @@ export function ChatView({
       )}
 
       <form className="composer" ref={formRef} onSubmit={onSubmit}>
-        <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden onChange={pickImage} />
-        <input ref={anyFileRef} type="file" hidden onChange={pickAnyFile} />
         <button
           type="button"
           className="composer-icon plus"
@@ -1247,15 +1132,9 @@ export function ChatView({
             aria-label="メッセージ"
           />
         </div>
-        {hasText || editing ? (
-          <button className="send-btn" disabled={busy || !hasText} aria-label={editing ? "保存" : "送信"}>
-            <i className={editing ? "fa-solid fa-check" : "fa-solid fa-paper-plane"} aria-hidden="true" />
-          </button>
-        ) : (
-          <button type="button" className="composer-icon stamp" onClick={() => setStampOpen(true)} aria-label="スタンプを送る">
-            <i className="fa-regular fa-face-smile" aria-hidden="true" />
-          </button>
-        )}
+        <button className="send-btn" disabled={busy || (!hasText && !editing)} aria-label={editing ? "保存" : "送信"}>
+          <i className={editing ? "fa-solid fa-check" : "fa-solid fa-paper-plane"} aria-hidden="true" />
+        </button>
       </form>
 
       {menu && (
@@ -1281,9 +1160,6 @@ export function ChatView({
           onClose={() => setForwarding(null)}
         />
       )}
-      {viewing?.imageUrl && (
-        <ImageViewer src={viewing.imageUrl} id={viewing.id} onClose={() => setViewing(null)} />
-      )}
       {notice && <div className="toast">{notice}</div>}
 
       {showInfo && conversation && (
@@ -1307,18 +1183,9 @@ export function ChatView({
           }}
         />
       )}
-      {stampOpen && <StampSheet onPick={(ref) => void sendStamp(ref)} onClose={() => setStampOpen(false)} />}
       {attachOpen && (
         <AttachSheet
           onClose={() => setAttachOpen(false)}
-          onImage={() => {
-            setAttachOpen(false);
-            fileRef.current?.click();
-          }}
-          onFile={() => {
-            setAttachOpen(false);
-            anyFileRef.current?.click();
-          }}
           onContact={() => {
             setAttachOpen(false);
             setContactOpen(true);
@@ -1347,16 +1214,7 @@ export function ChatView({
           onClose={() => setPollViewingId(null)}
         />
       )}
-      {fileViewing?.fileUrl && (
-        <FileViewer
-          url={`${fileViewing.fileUrl}/view`}
-          name={fileViewing.fileName ?? null}
-          size={formatSize(fileViewing.fileSize)}
-          onClose={() => setFileViewing(null)}
-          onDownload={() => downloadFile(fileViewing.fileUrl!, fileViewing.fileName)}
-        />
-      )}
-      {gameOpen && <GameSheet onPick={(kind) => void createGame(kind)} onClose={() => setGameOpen(false)} />}
+            {gameOpen && <GameSheet onPick={(kind) => void createGame(kind)} onClose={() => setGameOpen(false)} />}
       {contactOpen && (
         <ContactSheet
           meId={meId}

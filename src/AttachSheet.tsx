@@ -1,17 +1,13 @@
 import { Icon } from "./Icon";
 import { useExitClose } from "./useExitClose";
 
-// 「＋」から開く添付メニュー。写真・ファイルは、ファイル選択を直接開くためすぐに呼ぶ
+// 「＋」から開く添付メニュー（連絡先・投票・ミニゲーム）
 export function AttachSheet({
-  onImage,
-  onFile,
   onContact,
   onPoll,
   onGame,
   onClose
 }: {
-  onImage: () => void;
-  onFile: () => void;
   onContact: () => void;
   onPoll: () => void;
   // グループのトークでだけ出す「ミニゲーム」
@@ -34,12 +30,6 @@ export function AttachSheet({
             ×
           </button>
         </div>
-        <button onClick={onImage}>
-          <Icon name="image" size={22} /> <span>写真</span>
-        </button>
-        <button onClick={onFile}>
-          <Icon name="file" size={22} /> <span>ファイル</span>
-        </button>
         <button onClick={onContact}>
           <Icon name="card" size={22} /> <span>連絡先（SoraChat）</span>
         </button>

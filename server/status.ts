@@ -1,7 +1,7 @@
 import { config, missingSenninSettings } from "./config.js";
 import { pushEnabled } from "./push.js";
-import { IMAGE_BUCKET, sb } from "./supabase.js";
 import { tursoExecute } from "./turso.js";
+import { sb } from "./supabase.js";
 
 // サービス稼働状況（/api/status と /status の画面）。
 // 表示する値はすべて、このサーバーが実際に行った確認の結果です。固定の文言で「正常」とは出しません。
@@ -120,7 +120,6 @@ const TABLE_NAMES: Record<string, string> = {
   sc_reactions: "リアクション",
   sc_poll_votes: "投票",
   sc_games: "ミニゲーム",
-  sc_user_stamps: "スタンプ",
   sc_senninai_pending: "senninai の送信確認",
   sc_push_subscriptions: "通知の登録"
 };
@@ -135,18 +134,10 @@ const PROBES: Record<string, Probe> = {
     })
   },
   blob: {
-    label: "画像・ファイルの保存先（Turso）",
+    label: "アイコン画像の保存先（Turso）",
     run: () =>
       timedCheck(async () => {
         await tursoExecute("select 1");
-      }, "問い合わせに成功しました")
-  },
-  storage: {
-    label: "旧画像の保存先（Supabase Storage）",
-    run: () =>
-      timedCheck(async () => {
-        const { error } = await sb.storage.from(IMAGE_BUCKET).list("", { limit: 1 });
-        if (error) throw error;
       }, "問い合わせに成功しました")
   },
   sennin: {
@@ -200,11 +191,10 @@ type FeatureDef = {
 
 const FEATURES: FeatureDef[] = [
   { id: "server", group: "基盤", name: "サーバー（Webアプリ本体）", needs: ["server"] },
-  { id: "storage-blob", group: "基盤", name: "画像・ファイルの保存", needs: ["blob"] },
-  { id: "storage-legacy", group: "基盤", name: "移行前の画像の読み込み", needs: ["storage"] },
+  { id: "avatar-blob", group: "基盤", name: "アイコン画像の保存（Turso）", needs: ["blob"] },
   { id: "login", group: "アカウント", name: "ユーザー名・パスワードでログイン・新規登録", needs: ["table:sc_users", "table:sc_sessions"] },
   { id: "login-sennin", group: "アカウント", name: "仙人アカウントでログイン", needs: ["sennin", "table:sc_sessions", "table:sc_users"] },
-  { id: "profile", group: "アカウント", name: "プロフィール・ノート・アバター", needs: ["table:sc_users", "table:sc_notes", "blob"], optional: ["storage"] },
+  { id: "profile", group: "アカウント", name: "プロフィール・ノート・アバター", needs: ["table:sc_users", "table:sc_notes", "blob"] },
   { id: "friends", group: "友だち", name: "友だち（追加・申請・削除）", needs: ["table:sc_friends", "table:sc_friend_requests", "table:sc_users"] },
   { id: "blocks", group: "友だち", name: "ブロック", needs: ["table:sc_blocks"] },
   { id: "talk-dm", group: "トーク", name: "トーク（1対1）", needs: ["table:sc_conversations", "table:sc_members", "table:sc_messages"] },
@@ -212,9 +202,8 @@ const FEATURES: FeatureDef[] = [
   { id: "openchat", group: "トーク", name: "オープンチャット", needs: ["table:sc_conversations", "table:sc_members"] },
   { id: "message-edit", group: "トーク", name: "返信・編集・送信の取り消し・転送", needs: ["table:sc_messages"] },
   { id: "reactions", group: "トーク", name: "リアクション", needs: ["table:sc_reactions", "table:sc_messages"] },
-  { id: "media", group: "トーク", name: "画像・ファイル・連絡先の送信", needs: ["table:sc_messages", "blob"], optional: ["storage"] },
+  { id: "contacts", group: "トーク", name: "連絡先の送信", needs: ["table:sc_messages"] },
   { id: "polls", group: "トーク", name: "投票", needs: ["table:sc_messages", "table:sc_poll_votes"] },
-  { id: "stamps", group: "トーク", name: "スタンプ", needs: ["table:sc_messages", "table:sc_user_stamps"] },
   { id: "realtime", group: "トーク", name: "新着・既読などのリアルタイム反映", needs: ["realtime"] },
   { id: "push", group: "通知", name: "Web Push 通知", needs: ["cfg:push", "table:sc_push_subscriptions"] },
   { id: "senninai", group: "AI・ゲーム", name: "senninai（AIチャット）", needs: ["senninai", "table:sc_senninai_pending"] },

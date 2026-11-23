@@ -1,4 +1,3 @@
-import { stamps } from "./stamps.js";
 import express from "express";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
@@ -22,18 +21,7 @@ import { BlockedError } from "./messages.js";
 import { attachRealtime } from "./realtime.js";
 import { initializeMaintenanceSettings, maintenanceGate } from "./maintenance.js";
 import { getStatus } from "./status.js";
-import { store } from "./store.js";
-import { senninPay } from "./senninpay.js";
-import { senningames } from "./senningames.js";
-import { adminPay } from "./adminPay.js";
-import { studio } from "./studio.js";
-import { studioAdmin } from "./studioAdmin.js";
-import { studioReviews } from "./studioReviews.js";
-import { battle } from "./battle.js";
-import { extensionStorage } from "./extensionStorage.js";
-import tubeRouter from "./tube/router.js";
 import { ipBanGate, reloadIpBans } from "./ipBans.js";
-import { referral } from "./referral.js";
 
 const app = express();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -60,29 +48,15 @@ app.get("/api/status", async (_req, res) => {
 // /api/admin と /admin はメンテナンス中も利用できる。
 app.use(maintenanceGate);
 
-// 仙人Tube Plus（/tube の中で動く。SoraChat と同じ場所から開く）
-app.use("/tube", tubeRouter);
-
 app.use("/api", accounts);
-app.use("/api", referral);
 app.use("/api", dm);
 app.use("/api", friends);
 app.use("/api", push);
 app.use("/api", openChats);
 app.use("/api", senninai);
-app.use("/api", stamps);
 app.use("/api", blocks);
 app.use("/api", calls);
-app.use("/api", store);
-app.use("/api", senninPay);
-app.use("/api", senningames);
-app.use("/api", studio);
-app.use("/api", studioReviews);
-app.use("/api", battle);
-app.use("/api", extensionStorage);
-app.use("/api", studioAdmin);
 app.use("/api", admin);
-app.use("/api", adminPay);
 app.use("/api", (_req, res) => {
   res.status(404).json({ error: "見つかりません。" });
 });

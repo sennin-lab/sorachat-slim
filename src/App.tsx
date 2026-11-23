@@ -4,7 +4,6 @@ import { AuthScreen } from "./AuthScreen";
 import { BannedScreen } from "./Banned";
 import { ChatBootScreen } from "./Loading";
 import { clearCache, loadMeDb, saveMeDb } from "./cache";
-import { BattleHost } from "./BattleHost";
 import { GroupCallHost } from "./GroupCallScreen";
 import { Home } from "./Home";
 import { Intro, hasSeenIntro, resetIntro } from "./Intro";
@@ -95,7 +94,6 @@ export default function App() {
         }}
       />
       <GroupCallHost me={me} />
-      <BattleHost me={me} />
     </>
   );
 }

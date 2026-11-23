@@ -10,15 +10,6 @@ type Mode = "start" | "register" | "login";
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
 const PASSWORD_MIN = 8;
 
-// 招待のリンク（?invite=コード）から来たときは、招待コードを入れておく
-function readInviteParam(): string {
-  try {
-    return (new URLSearchParams(window.location.search).get("invite") ?? "").trim().toUpperCase().slice(0, 16);
-  } catch {
-    return "";
-  }
-}
-
 // 吹き出しのロゴ（トークの形をモチーフにしたもの）
 function Logo({ size = 72 }: { size?: number }) {
   return (
@@ -76,7 +67,6 @@ export function AuthScreen({ initialError, onShowIntro }: { initialError: string
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [inviteCode, setInviteCode] = useState(readInviteParam);
   // IP が取得できなかったときに、手入力を求めるモーダル
   const [ipAsk, setIpAsk] = useState(false);
   const [ipBusy, setIpBusy] = useState(false);
@@ -113,7 +103,6 @@ export function AuthScreen({ initialError, onShowIntro }: { initialError: string
         username: normalizedName,
         password,
         displayName: displayName.trim(),
-        inviteCode: inviteCode.trim() || undefined,
         manualIp: manualIpValue
       })
     );
@@ -247,21 +236,6 @@ export function AuthScreen({ initialError, onShowIntro }: { initialError: string
           </Field>
         )}
 
-        {isRegister && (
-          <Field icon={<UserGlyph />}>
-            <input
-              className="auth-field-input"
-              value={inviteCode}
-              onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-              maxLength={16}
-              placeholder="招待コード（任意）"
-              autoCapitalize="characters"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-          </Field>
-        )}
-        {isRegister && <p className="auth-hint">友だちの招待コードで登録すると、お互いに2,000ptもらえます</p>}
 
         <Field icon={<UserGlyph />} invalid={usernameInvalid}>
           <input

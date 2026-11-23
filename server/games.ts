@@ -12,7 +12,6 @@ import { sendToUser } from "./hub.js";
 import { insertMessage, memberIds, type MessageRow } from "./messages.js";
 import { deadlineOf, GAME_CONFIG, GameError, reduce, viewOf, type GameAction, type GameKind, type GameStatus, type GameView, type Reduced, type Stored } from "./gameLogic.js";
 import { generateQuizQuestions } from "./quizgen.js";
-import { studioQuizFor } from "./studioData.js";
 import { QUIZ_ROUNDS } from "./gameLogic.js";
 import { sb } from "./supabase.js";
 
@@ -330,7 +329,7 @@ export async function gameAction(messageId: string, me: string, input: GameActio
       !g.state.play &&
       !g.state.cancelled &&
       g.state.players.length >= GAME_CONFIG.quiz.min;
-    const quizQuestions = startingQuiz ? (await studioQuizFor(me, QUIZ_ROUNDS).catch(() => null)) ?? (await generateQuizQuestions()) : null;
+    const quizQuestions = startingQuiz ? await generateQuizQuestions() : null;
     const next = reduce(g.kind, g.creator, g.state, me, { ...input, rttMs }, Math.random, quizQuestions ?? undefined, Date.now());
     applyResult(g, next);
     await broadcastLive(g);

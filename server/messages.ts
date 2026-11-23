@@ -1,6 +1,5 @@
 import { decryptText, encryptText } from "./crypto.js";
 import { findCall } from "./callRegistry.js";
-import { normalizeStampRef } from "./stampRef.js";
 import { activeEndpoints, sendToUser } from "./hub.js";
 import { removeImage } from "./media.js";
 import { notifyRecipient } from "./push.js";
@@ -10,7 +9,7 @@ import { withKeyedLock } from "./keyedLock.js";
 
 export const UUID = /^[0-9a-f-]{36}$/i;
 export const COLUMNS =
-  "id, conversation_id, sender_id, kind, body, created_at, edited_at, deleted_at, forwarded, file_name, file_size, contact_user_id, reply_to_id, stamp_ref";
+  "id, conversation_id, sender_id, kind, body, created_at, edited_at, deleted_at, forwarded, contact_user_id, reply_to_id";
 
 export type Role = "owner" | "member";
 export type Reaction = { emoji: string; count: number; mine: boolean };
@@ -18,26 +17,20 @@ export type MessageRow = {
   id: string;
   conversation_id: string;
   sender_id: string;
-  kind: "text" | "image" | "file" | "contact" | "system" | "stamp" | "poll" | "game" | "call";
+  kind: "text" | "contact" | "system" | "poll" | "game" | "call";
   body: string | null;
   created_at: string;
   edited_at: string | null;
   deleted_at: string | null;
   forwarded: boolean;
-  file_name: string | null;
-  file_size: number | null;
   contact_user_id: string | null;
   reply_to_id: string | null;
-  stamp_ref: string | null;
 };
 export type ContactInfo = { id: string; username: string; displayName: string; hasAvatar: boolean };
 export type Content =
   | { kind: "system"; body: string }
   | { kind: "text"; body: string }
-  | { kind: "image"; imagePath: string }
-  | { kind: "file"; filePath: string; fileName: string; fileSize: number }
   | { kind: "contact"; contactUserId: string }
-  | { kind: "stamp"; stampRef: string }
   | { kind: "poll"; question: string; options: string[]; multiple: boolean; anonymous?: boolean }
   | { kind: "game" }
   | { kind: "call"; callId: string };
@@ -133,13 +126,6 @@ export function pollView(
   };
 }
 
-// スタンプの指定。stamp_ref が空の古い行は本文に名前が入っていることがあるので、そちらも見る
-function stampRefOf(row: { stamp_ref: string | null; body: string | null }): string | null {
-  const raw = row.stamp_ref ?? (row.body ? decryptText(row.body) : null);
-  if (!raw) return null;
-  return normalizeStampRef(raw);
-}
-
 export function toMessage(
   row: MessageRow,
   reactions: Reaction[] = [],
@@ -157,18 +143,12 @@ export function toMessage(
     senderId: row.sender_id,
     kind: row.kind,
     // 投票の本文は質問文にする（一覧・返信の表示用）
-    // スタンプは本文を持たない（古い行では本文に名前が入っていることがあるので表示しない）
-    body: deleted ? null : row.kind === "poll" ? pollData?.question ?? null : row.kind === "stamp" || row.kind === "call" ? null : decryptText(row.body),
+    body: deleted ? null : row.kind === "poll" ? pollData?.question ?? null : row.kind === "call" ? null : decryptText(row.body),
     poll: deleted ? null : poll,
     game: deleted ? null : game,
     // 通話カード（進行中なら「電話に参加」を出す）
     call: row.kind === "call" && !deleted && callId ? { callId, active: findCall(callId) !== undefined } : null,
-    imageUrl: row.kind === "image" && !deleted ? `/api/dm/messages/${row.id}/image` : null,
-    fileName: row.kind === "file" && !deleted ? row.file_name : null,
-    fileSize: row.kind === "file" && !deleted ? row.file_size : null,
-    fileUrl: row.kind === "file" && !deleted ? `/api/dm/messages/${row.id}/file` : null,
     contact: row.kind === "contact" && !deleted ? contact : null,
-    stampRef: row.kind === "stamp" && !deleted ? stampRefOf(row) : null,
     createdAt: row.created_at,
     edited: row.edited_at !== null,
     deleted,
@@ -404,24 +384,15 @@ export async function leaveConversation(conversationId: string, userId: string):
   else await broadcastList(conversationId);
 }
 
-// トークを完全に消す（メッセージ・リアクション・画像・ファイル・アイコン）
+// トークを完全に消す（メッセージ・リアクション・アイコン）
 export async function purgeConversation(conversationId: string): Promise<void> {
-  const { data: rows, error } = await sb.from("sc_messages").select("image_path, file_path").eq("conversation_id", conversationId);
-  if (error) throw error;
   const { data: conv } = await sb.from("sc_conversations").select("avatar_path").eq("id", conversationId).maybeSingle();
-  const paths = new Set(
-    ((rows ?? []) as { image_path: string | null; file_path: string | null }[])
-      .flatMap((r) => [r.image_path, r.file_path])
-      .filter((p): p is string => Boolean(p))
-  );
-  // 先に行を消してから、画像・ファイルがほかの会話（転送先）で使われていなければ消す
   for (const table of ["sc_messages", "sc_members"]) {
     const { error: deleteError } = await sb.from(table).delete().eq("conversation_id", conversationId);
     if (deleteError) throw deleteError;
   }
   const { error: convError } = await sb.from("sc_conversations").delete().eq("id", conversationId);
   if (convError) throw convError;
-  for (const path of paths) await removeImageIfUnused(path);
   if (conv?.avatar_path) await removeImage(conv.avatar_path as string);
 }
 
@@ -459,32 +430,21 @@ export async function insertMessage(
   const now = new Date().toISOString();
   const shortPreview = preview.slice(0, 80);
   const none = {
-    image_path: null,
-    file_path: null,
-    file_name: null,
-    file_size: null,
     contact_user_id: null,
-    stamp_ref: null,
     reply_to_id: options.replyToId ?? null
   };
   const fields =
     content.kind === "text"
       ? { ...none, kind: "text", body: encryptText(content.body) }
-      : content.kind === "image"
-        ? { ...none, kind: "image", body: null, image_path: content.imagePath }
-        : content.kind === "file"
-          ? { ...none, kind: "file", body: null, file_path: content.filePath, file_name: content.fileName, file_size: content.fileSize }
-          : content.kind === "contact"
-            ? { ...none, kind: "contact", body: null, contact_user_id: content.contactUserId }
-            : content.kind === "stamp"
-              ? { ...none, kind: "stamp", body: null, stamp_ref: content.stampRef }
-              : content.kind === "poll"
-                ? { ...none, kind: "poll", body: encryptText(pollBodyOf(content)) }
-                : content.kind === "game"
-                  ? { ...none, kind: "game", body: null }
-                  : content.kind === "call"
-                    ? { ...none, kind: "call", body: encryptText(content.callId) }
-                    : { ...none, kind: "system", body: encryptText(content.body) };
+      : content.kind === "contact"
+        ? { ...none, kind: "contact", body: null, contact_user_id: content.contactUserId }
+        : content.kind === "poll"
+          ? { ...none, kind: "poll", body: encryptText(pollBodyOf(content)) }
+          : content.kind === "game"
+            ? { ...none, kind: "game", body: null }
+            : content.kind === "call"
+              ? { ...none, kind: "call", body: encryptText(content.callId) }
+              : { ...none, kind: "system", body: encryptText(content.body) };
 
   const { data, error } = await sb
     .from("sc_messages")
@@ -549,11 +509,3 @@ export async function displayNameOf(userId: string): Promise<string> {
   return (data?.display_name as string | undefined) ?? "メンバー";
 }
 
-// 画像・ファイルの実体は、どのメッセージからも参照されなくなったときに消す（転送で共有するため）
-export async function removeImageIfUnused(path: string) {
-  const { count } = await sb
-    .from("sc_messages")
-    .select("id", { count: "exact", head: true })
-    .or(`image_path.eq.${path},file_path.eq.${path}`);
-  if (!count) await removeImage(path);
-}

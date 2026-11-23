@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { matchPath, useLocation, useNavigate } from "react-router-dom";
 import { api, post } from "./api";
 import { ChatView } from "./ChatView";
@@ -9,16 +9,7 @@ import { connectRealtime, onDataEvent, startDataSync } from "./realtime";
 import { refreshPush } from "./push";
 import { NotifyPrompt } from "./NotifyPrompt";
 import { OpenChatSheet } from "./OpenChatSheet";
-import { ReferralSheet } from "./ReferralSheet";
-import { StorePage } from "./StorePage";
-import { StudioPage } from "./StudioPage";
-import { TubePage } from "./TubePage";
-import { ExtensionsPage } from "./ExtensionsPage";
 import { ChatBootScreen } from "./Loading";
-// SenninPay は使うときだけ読み込む（通常の起動を軽く保つため）
-const SenninPayPage = lazy(() => import("./SenninPayPage").then((m) => ({ default: m.SenninPayPage })));
-// senningames（1人で遊ぶゲーム）も、開くときだけ読み込む
-const SenningamesPage = lazy(() => import("./SenningamesPage").then((m) => ({ default: m.SenningamesPage })));
 import { AddFriendSheet } from "./AddFriendSheet";
 import { FriendsTab } from "./FriendsTab";
 import { Icon } from "./Icon";
@@ -53,7 +44,7 @@ const shouldAskNotify = (me: Me) => {
 // URL とタブの対応。プロフィールなどの重ねて表示する画面では null（直前のタブを保つ）
 const tabOfPath = (path: string): Tab | null => {
   if (path.startsWith("/friends")) return "friends";
-  if (path.startsWith("/more") || path.startsWith("/store") || path.startsWith("/studio") || path.startsWith("/pay") || path.startsWith("/tube") || path.startsWith("/extensions")) return "more";
+  if (path.startsWith("/more")) return "more";
   if (path === "/" || path.startsWith("/home") || path.startsWith("/dm/") || path.startsWith("/groupchat/")) return "talk";
   return null;
 };
@@ -77,18 +68,6 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
   const path = location.pathname;
   const chatId = (matchPath("/dm/:id", path) ?? matchPath("/groupchat/:id", path))?.params.id ?? null;
   const viewUser = matchPath("/profile/:id", path)?.params.id ?? null;
-  // 仙人ストア（/store）と senninstudio（/studio）は、専用のページとして開く
-  // （/store/item/:id・/store/author/:id、/studio/works/:id/edit のような下の画面も、同じ専用ページで開く）
-  const onStorePage = path === "/store" || path.startsWith("/store/");
-  const onStudioPage = path === "/studio" || path.startsWith("/studio/");
-  // SenninPay（/pay）も専用のページとして開く
-  const onPayPage = path === "/pay" || path.startsWith("/pay/");
-  // senningames（/senningames）も専用のページとして開く
-  const onGamesPage = path === "/senningames" || path.startsWith("/senningames/");
-  // 仙人Tube Plus（/tube）も専用のページとして開く
-  const onTubePage = path === "/tube" || path.startsWith("/tube/");
-  // 拡張機能（その他 →「拡張機能」）も専用のページとして開く（/extensions）
-  const onExtensionsPage = path === "/extensions" || path.startsWith("/extensions/");
 
   const [selectedId, setSelectedId] = useState<string | null>(chatId);
   const [tab, setTab] = useState<Tab>(() => tabOfPath(path) ?? "talk");
@@ -96,9 +75,6 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
   const [showSettings, setShowSettings] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showOpenChats, setShowOpenChats] = useState(false);
-  const [showReferral, setShowReferral] = useState(false);
-  // 仙人アカウントの連携から戻ったときの結果（連携できた・できなかった）。ストアと senninstudio のページに表示する
-  const [storeFlash, setStoreFlash] = useState<{ ok: boolean; text: string } | null>(null);
   const [showNotifyPrompt, setShowNotifyPrompt] = useState(() => shouldAskNotify(me));
   const [showAdd, setShowAdd] = useState(false);
   // 友だちが増えた・減ったときに友だち一覧を取り直すための番号
@@ -129,53 +105,8 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
     localStorage.setItem("sorachat-theme", theme);
   }, [theme]);
 
-  // 仙人ストアで選んだ外観（吹き出し・背景の色）を、自分の画面に反映する
-  // 作品の配色（色の値）は、その色を直接入れる。標準の外観は data-store-theme で決まる
-  useEffect(() => {
-    if (me.storeTheme) document.documentElement.dataset.storeTheme = me.storeTheme;
-    else delete document.documentElement.dataset.storeTheme;
-    const style = document.documentElement.style;
-    const palette = me.storeThemePalette;
-    if (palette) {
-      style.setProperty("--mine", palette.mine);
-      style.setProperty("--chat-bg", palette.bg);
-      style.setProperty("--accent", palette.accent);
-      style.setProperty("--accent-ink", palette.accent);
-    } else {
-      for (const name of ["--mine", "--chat-bg", "--accent", "--accent-ink"]) style.removeProperty(name);
-    }
-  }, [me.storeTheme, JSON.stringify(me.storeThemePalette ?? null)]);
-
-  // 仙人アカウントの連携から戻ってきたら（/store か /studio に戻る）、結果を出す（URL の印は消す）
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const linked = params.get("store") === "linked";
-    const error = params.get("store_error");
-    if (!linked && !error) return;
-    const studioPage = path.startsWith("/studio");
-    const payPage = path.startsWith("/pay");
-    const gamesPage = path.startsWith("/senningames");
-    setStoreFlash(
-      linked
-        ? {
-            ok: true,
-            text: studioPage
-              ? "仙人アカウントと連携しました。作品を公開できます。"
-              : payPage
-                ? "仙人アカウントと連携しました。SenninPayが使えます。"
-                : gamesPage
-                  ? "仙人アカウントと連携しました。ポイントを出金できます。"
-                  : "仙人アカウントと連携しました。ストアで買い物できます。"
-          }
-        : { ok: false, text: error ?? "" }
-    );
-    setTab("more");
-    navigate(studioPage ? "/studio" : payPage ? "/pay" : gamesPage ? "/senningames" : "/store", { replace: true });
-  }, []);
-
   // 専用ページを閉じる（開いた元の画面へ戻る。直接開いたときは「その他」へ）
   const closePage = () => {
-    setStoreFlash(null);
     if ((window.history.state?.idx ?? 0) > 0) navigate(-1);
     else navigate("/more", { replace: true });
   };
@@ -382,69 +313,6 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
                   </button>
                 </li>
                 <li>
-                  <button onClick={() => setShowReferral(true)}>
-                    <span className="option-icon">
-                      <Icon name="userPlus" size={20} />
-                    </span>
-                    友だち招待
-                    <Icon name="chevron" size={18} className="chev" />
-                  </button>
-                </li>
-                <li>
-                  <button onClick={() => navigate("/studio")}>
-                    <span className="option-icon">
-                      <Icon name="edit" size={20} />
-                    </span>
-                    senninstudio
-                    <Icon name="chevron" size={18} className="chev" />
-                  </button>
-                </li>
-                <li>
-                  <button onClick={() => navigate("/store")}>
-                    <span className="option-icon">
-                      <Icon name="store" size={20} />
-                    </span>
-                    仙人ストア
-                    <Icon name="chevron" size={18} className="chev" />
-                  </button>
-                </li>
-                <li>
-                  <button onClick={() => navigate("/extensions")}>
-                    <span className="option-icon">
-                      <Icon name="code" size={20} />
-                    </span>
-                    拡張機能
-                    <Icon name="chevron" size={18} className="chev" />
-                  </button>
-                </li>
-                <li>
-                  <button onClick={() => navigate("/pay")}>
-                    <span className="option-icon">
-                      <Icon name="wallet" size={20} />
-                    </span>
-                    SenninPay
-                    <Icon name="chevron" size={18} className="chev" />
-                  </button>
-                </li>
-                <li>
-                  <button onClick={() => navigate("/senningames")}>
-                    <span className="option-icon">
-                      <Icon name="game" size={20} />
-                    </span>
-                    senningames
-                    <Icon name="chevron" size={18} className="chev" />
-                  </button>
-                </li>
-                <li>
-                  <button onClick={() => navigate("/tube")}>
-                    <span className="option-icon">
-                      <Icon name="play" size={20} />
-                    </span>
-                    仙人Tube Plus
-                    <Icon name="chevron" size={18} className="chev" />
-                  </button>
-                </li>
-                <li>
                   <button onClick={() => setShowSettings(true)}>
                     <span className="option-icon">
                       <Icon name="settings" size={20} />
@@ -555,21 +423,6 @@ export function Home({ me, onMeChange, onLogout }: { me: Me; onMeChange: (me: Me
           onFriendsChanged={bumpFriends}
         />
       )}
-      {onStudioPage && <StudioPage flash={storeFlash} onBack={closePage} />}
-      {onStorePage && <StorePage me={me} flash={storeFlash} onBack={closePage} onMeChange={onMeChange} />}
-      {onPayPage && (
-        <Suspense fallback={null}>
-          <SenninPayPage me={me} flash={storeFlash} onBack={closePage} />
-        </Suspense>
-      )}
-      {onGamesPage && (
-        <Suspense fallback={null}>
-          <SenningamesPage flash={storeFlash} onBack={closePage} />
-        </Suspense>
-      )}
-      {onTubePage && <TubePage onBack={closePage} />}
-      {onExtensionsPage && <ExtensionsPage me={me} onBack={closePage} onMeChange={onMeChange} />}
-      {showReferral && <ReferralSheet onClose={() => setShowReferral(false)} />}
       {showOpenChats && (
         <OpenChatSheet
           onClose={() => setShowOpenChats(false)}

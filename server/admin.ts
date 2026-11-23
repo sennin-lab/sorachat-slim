@@ -7,7 +7,7 @@ import { disconnectUser } from "./hub.js";
 import { isAllowedImage, readImage, removeImage, saveImage, upload } from "./media.js";
 import { sb } from "./supabase.js";
 import { decryptText, encryptText } from "./crypto.js";
-import { broadcastList, broadcastToConversation, removeImageIfUnused, UUID } from "./messages.js";
+import { broadcastList, broadcastToConversation, UUID } from "./messages.js";
 import { sendAnnouncement, TEAM_ID } from "./team.js";
 import { getMaintenanceSettings, updateMaintenanceSettings } from "./maintenance.js";
 import { addIpBan, manualIp, removeIpBan } from "./ipBans.js";
@@ -165,7 +165,7 @@ admin.get("/admin/users/:id", async (req, res) => {
   if (!id) return;
   const { data: user, error } = await sb
     .from("sc_users")
-    .select(`${USER_COLUMNS}, signup_ip, last_ip, invite_code`)
+    .select(`${USER_COLUMNS}, signup_ip, last_ip`)
     .eq("id", id)
     .maybeSingle();
   if (error) throw error;
@@ -185,10 +185,6 @@ admin.get("/admin/users/:id", async (req, res) => {
   const { data: memberRows, error: memberError } = await sb.from("sc_members").select("conversation_id").eq("user_id", id);
   if (memberError) throw memberError;
   const conversations = await loadSummaries((memberRows ?? []).map((row: { conversation_id: string }) => row.conversation_id));
-  const { count: invitedCount } = await sb
-    .from("sc_referrals")
-    .select("id", { count: "exact", head: true })
-    .eq("inviter_id", id);
   res.json({
     ...userSummary(user as UserRow),
     bio: user.bio,
@@ -198,8 +194,6 @@ admin.get("/admin/users/:id", async (req, res) => {
     // IP（取得できていないときは null。管理者が手入力で BAN することもできる）
     signupIp: (user.signup_ip as string | null) ?? null,
     lastIp: (user.last_ip as string | null) ?? null,
-    inviteCode: (user.invite_code as string | null) ?? null,
-    invitedCount: invitedCount ?? 0,
     friends: friends.map(userSummary),
     conversations
   });
@@ -444,7 +438,7 @@ admin.post("/admin/users/:id/password", async (req, res) => {
 });
 
 // ---- メッセージの削除（取り消しの表示も残さず、トークから消す。相手の画面からも消える）----
-const PREVIEW_LABEL: Record<string, string> = { image: "画像", file: "ファイル", contact: "連絡先", stamp: "スタンプ", poll: "投票", game: "ミニゲーム" };
+const PREVIEW_LABEL: Record<string, string> = { contact: "連絡先", poll: "投票", game: "ミニゲーム" };
 
 async function refreshLastPreview(conversationId: string, deletedAt: string) {
   // 削除したのが一番新しいメッセージだった場合、一覧に出す最後の文を残っているものに直す
@@ -471,7 +465,7 @@ admin.delete("/admin/messages/:id", async (req, res) => {
   if (!id) return;
   const { data: msg, error: readError } = await sb
     .from("sc_messages")
-    .select("id, conversation_id, image_path, file_path, created_at")
+    .select("id, conversation_id, created_at")
     .eq("id", id)
     .maybeSingle();
   if (readError) throw readError;
@@ -482,8 +476,6 @@ admin.delete("/admin/messages/:id", async (req, res) => {
   // 行を消す（リアクション・投票・ミニゲームなどは一緒に消える）
   const { error } = await sb.from("sc_messages").delete().eq("id", id);
   if (error) throw error;
-  if (msg.image_path) await removeImageIfUnused(msg.image_path);
-  if (msg.file_path) await removeImageIfUnused(msg.file_path);
   await refreshLastPreview(msg.conversation_id as string, msg.created_at as string);
   await broadcastToConversation(msg.conversation_id as string, { type: "message_removed", conversationId: msg.conversation_id, id });
   await broadcastList(msg.conversation_id as string);
@@ -595,7 +587,7 @@ admin.get("/admin/conversations/:id/messages", async (req, res) => {
   }
   let query = sb
     .from("sc_messages")
-    .select("id, sender_id, kind, body, created_at, edited_at, deleted_at, forwarded, file_name, file_size, reply_to_id")
+    .select("id, sender_id, kind, body, created_at, edited_at, deleted_at, forwarded, reply_to_id")
     .eq("conversation_id", id);
   if (before) query = query.lt("created_at", before.toISOString());
   const { data, error } = await query.order("created_at", { ascending: false }).limit(50);
@@ -621,36 +613,9 @@ admin.get("/admin/conversations/:id/messages", async (req, res) => {
         edited: r.edited_at !== null,
         forwarded: r.forwarded,
         replyToId: r.reply_to_id,
-        createdAt: r.created_at,
-        fileName: r.kind === "file" && !deleted ? r.file_name : null,
-        fileSize: r.kind === "file" && !deleted ? r.file_size : null,
-        imageUrl: r.kind === "image" && !deleted ? `/api/admin/messages/${r.id}/image` : null,
-        fileUrl: r.kind === "file" && !deleted ? `/api/admin/messages/${r.id}/file` : null
+        createdAt: r.created_at
       };
     })
   );
 });
 
-async function sendMessageFile(req: Request, res: Response, column: "image_path" | "file_path") {
-  const id = idParam(req, res);
-  if (!id) return;
-  const { data } = await sb.from("sc_messages").select(`${column}, file_name`).eq("id", id).maybeSingle();
-  const path = data ? (data as Record<string, string | null>)[column] : null;
-  const image = path ? await readImage(path) : null;
-  if (!image) {
-    res.status(404).end();
-    return;
-  }
-  res.setHeader("cache-control", "private, no-cache");
-  if (column === "image_path") {
-    res.setHeader("content-type", image.type);
-  } else {
-    const name = (data as { file_name?: string | null } | null)?.file_name ?? "file";
-    res.setHeader("content-type", "application/octet-stream");
-    res.setHeader("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
-  }
-  res.send(image.buffer);
-}
-
-admin.get("/admin/messages/:id/image", (req, res) => sendMessageFile(req, res, "image_path"));
-admin.get("/admin/messages/:id/file", (req, res) => sendMessageFile(req, res, "file_path"));
