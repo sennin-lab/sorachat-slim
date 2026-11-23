@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { ApiError, api, post } from "./api";
-import { Avatar } from "./Avatar";
+import { GroupAvatar } from "./Avatar";
 import { AvatarCropper } from "./AvatarCropper";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FriendSelectPage } from "./FriendSelectPage";
@@ -15,6 +15,8 @@ type Detail = {
   isOpen: boolean;
   title: string;
   hasAvatar: boolean;
+  // アイコンの版（変わったら値も変わる）。保存済みのアイコンを使うかの判断に使う
+  avatarVersion?: string | null;
   myRole: "owner" | "member";
   // このグループの通知をオフにしているか（自分だけ）
   muted: boolean;
@@ -42,9 +44,8 @@ export function GroupSheet({
   const [adding, setAdding] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
-  // 切り抜き中の画像と、アイコンを差し替えたあとの再読み込み用の番号
+  // 切り抜き中の画像
   const [cropSource, setCropSource] = useState<string | null>(null);
-  const [avatarKey, setAvatarKey] = useState(0);
   // 通知のオン・オフ（自分だけ）と、管理者のグループ削除の確認
   const [muted, setMuted] = useState(false);
   const [askDisband, setAskDisband] = useState(false);
@@ -151,7 +152,7 @@ export function GroupSheet({
       const form = new FormData();
       form.append("file", blob, "group.jpg");
       await api(`/api/dm/${conversationId}/avatar`, { method: "POST", body: form });
-      setAvatarKey((k) => k + 1);
+      // 再読み込みで版が変わるので、GroupAvatar が新しい画像だけを取りに行く
       await load();
       onChanged();
       setStatus("グループのアイコンを更新しました。");
@@ -218,16 +219,28 @@ export function GroupSheet({
       </header>
 
       <div className="group-hero">
-          <Avatar
-            userId=""
+        {/* アイコンと名前は、グループのメンバーなら誰でも変えられる（管理者だけの制限はない） */}
+        <label className="profile-avatar group-avatar" aria-label="グループのアイコンを変更">
+          <GroupAvatar
+            conversationId={conversationId}
             hasAvatar={detail.hasAvatar}
+            avatarVersion={detail.avatarVersion}
             name={detail.title}
             size={96}
-            src={`/api/dm/${conversationId}/avatar?v=${avatarKey}`}
           />
-        {/* グループ名は、メンバーなら全員が変更できる */}
+          <span className="avatar-badge" aria-hidden="true">
+            <Icon name="camera" size={14} />
+          </span>
+          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden onChange={pickAvatar} disabled={busy} />
+        </label>
         <div className="inline-edit">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={40} aria-label="グループ名" />
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={40}
+            placeholder="グループ名（必須）"
+            aria-label="グループ名"
+          />
           <button
             className="btn-small accent"
             disabled={busy || title.trim() === "" || title.trim() === detail.title}
