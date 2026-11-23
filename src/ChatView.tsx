@@ -26,6 +26,8 @@ import { MessageMenu } from "./MessageMenu";
 import { isSocketOpen, onChatEvent, sendChat, sendGameAction, sendTyping } from "./realtime";
 import { UserProfileSheet } from "./UserProfileSheet";
 import { AttachSheet } from "./AttachSheet";
+import { StampImage, StampSheet } from "./StampSheet";
+import { ensureStamps } from "./stampCache";
 import { PREFS_EVENT, getShowUnsent } from "./prefs";
 import { ContactSheet } from "./ContactSheet";
 import { PollCard } from "./PollCard";
@@ -54,6 +56,7 @@ const messagePreview = (m: Message) => {
   if (m.kind === "poll") return `投票: ${m.body ?? ""}`;
   if (m.kind === "game") return "ミニゲーム";
   if (m.kind === "call") return "通話";
+  if (m.kind === "stamp") return "スタンプ";
   // 「\n」という文字のまま届いた改行は、一行の説明では空白にする
   return clipLongWords((m.body ?? "").replace(/\\n/g, " "));
 };
@@ -179,6 +182,7 @@ export function ChatView({
   const [friendship, setFriendship] = useState<FriendshipState | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [stampOpen, setStampOpen] = useState(false);
   const [contactOpen, setContactOpen] = useState(false);
   const [contactUser, setContactUser] = useState<ContactInfo | null>(null);
   const [pollOpen, setPollOpen] = useState(false);
@@ -608,6 +612,28 @@ export function ChatView({
     onActivity();
   };
 
+  // スタンプの一覧と画像を、最初の1回だけ端末に保存する（以後は送受信で画像を取らない）
+  useEffect(() => {
+    void ensureStamps();
+  }, []);
+
+  // スタンプを送る。画像は送らず、選んだスタンプの番号だけを送る
+  const sendStamp = async (stampId: string) => {
+    setStampOpen(false);
+    setError("");
+    try {
+      const message = await api<Message>(
+        `/api/dm/${conversationId}/stamp`,
+        post({ stampId, clientId: newClientId(), replyToId: replyTo?.id ?? null })
+      );
+      upsert([message]);
+      setReplyTo(null);
+      onActivity();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
+
   // ミニゲームを作る（グループのトークだけ）。募集がトークに出る
   const createGame = async (kind: GameKind) => {
     setGameOpen(false);
@@ -972,7 +998,7 @@ export function ChatView({
                   <div className="bubble-line">
                     {mine && meta}
                     <div
-                      className={`bubble ${m.kind === "poll" && m.poll && !m.deleted ? "poll" : ""} ${m.kind === "game" && !m.deleted ? "game" : ""} ${m.deleted ? "deleted" : ""} ${m.status ? "pending" : ""} ${hasStatus ? "has-status" : ""}`}
+                      className={`bubble ${m.kind === "poll" && m.poll && !m.deleted ? "poll" : ""} ${m.kind === "game" && !m.deleted ? "game" : ""} ${m.kind === "stamp" && !m.deleted ? "stamp" : ""} ${m.deleted ? "deleted" : ""} ${m.status ? "pending" : ""} ${hasStatus ? "has-status" : ""}`}
                       onContextMenu={(e) => e.preventDefault()}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -991,6 +1017,8 @@ export function ChatView({
                         </button>
                       ) : m.kind === "poll" && m.poll ? (
                         <PollCard poll={m.poll} onVote={(index) => void vote(m.id, index)} onOpen={() => setPollViewingId(m.id)} />
+                      ) : m.kind === "stamp" && m.body ? (
+                        <StampImage id={m.body} size={140} />
                       ) : m.kind === "call" && m.call ? (
                         <CallCard call={m.call} onJoin={() => joinCallFromMessage(m.call!.callId)} />
                       ) : m.kind === "game" ? (
@@ -1194,6 +1222,10 @@ export function ChatView({
             setAttachOpen(false);
             setPollOpen(true);
           }}
+          onStamp={() => {
+            setAttachOpen(false);
+            setStampOpen(true);
+          }}
           onGame={
             isGroup
               ? () => {
@@ -1204,6 +1236,7 @@ export function ChatView({
           }
         />
       )}
+      {stampOpen && <StampSheet onPick={(id) => void sendStamp(id)} onClose={() => setStampOpen(false)} />}
       {pollOpen && <PollSheet onSubmit={sendPoll} onClose={() => setPollOpen(false)} />}
       {pollViewingMessage?.poll && (
         <PollScreen

@@ -2577,3 +2577,12 @@ button[aria-busy="true"] { animation: sc-soft-pulse 1.4s ease-in-out infinite; }
 
 /* 対戦の相手を選ぶ画面は、拡張機能の画面（.ext-run・z-index 60）より前に出す */
 .page.battle-picker { z-index: 70; }
+
+/* スタンプ（画像は端末に保存済み。吹き出しの枠は付けない） */
+.bubble.stamp { padding: 0; background: transparent; box-shadow: none; border: 0; }
+.stamp-img { display: block; animation: fade-in 0.35s ease both; }
+.stamp-fallback { display: block; border-radius: 50%; background: rgba(0, 0, 0, 0.05); }
+.stamp-sheet .stamp-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 8px 0 4px; }
+.stamp-sheet .stamp-grid button { display: flex; flex-direction: column; align-items: center; gap: 4px; background: none; border: 0; padding: 6px; cursor: pointer; }
+.stamp-sheet .stamp-grid small { font-size: 11px; color: var(--muted); }
+.stamp-sheet .stamp-empty { text-align: center; color: var(--muted); padding: 24px 0; }

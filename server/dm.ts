@@ -1,3 +1,4 @@
+import { isKnownStamp, STAMP_ID } from "./stamps.js";
 import { Router } from "express";
 import { z } from "zod";
 import { currentUserId, requireAuth } from "./auth.js";
@@ -596,6 +597,37 @@ dm.post("/dm/:id/messages", async (req, res) => {
     replyToId
   });
   void senninaiAfterMessage(id, me, parsed.data.body, row);
+  res.status(201).json(toMessage(row, [], parsed.data.clientId ?? null));
+});
+
+// スタンプ：画像は送らず、端末に保存済みのスタンプ番号だけを送る（転送量を抑える）
+const stampSchema = z.object({
+  stampId: z.string().regex(STAMP_ID),
+  clientId: z.string().min(1).max(64).optional(),
+  replyToId: z.string().regex(UUID).nullish()
+});
+
+dm.post("/dm/:id/stamp", async (req, res) => {
+  const id = String(req.params.id);
+  const me = currentUserId(res);
+  if (!(await membership(id, me))) {
+    res.status(404).json({ error: "会話が見つかりません。" });
+    return;
+  }
+  const parsed = stampSchema.safeParse(req.body);
+  if (!parsed.success || !isKnownStamp(parsed.data.stampId)) {
+    res.status(400).json({ error: "スタンプが見つかりません。" });
+    return;
+  }
+  const replyToId = await replyFrom(id, parsed.data.replyToId);
+  if (replyToId === undefined) {
+    res.status(400).json({ error: "返信先のメッセージが見つかりません。" });
+    return;
+  }
+  const row = await insertMessage(id, me, { kind: "stamp", stampId: parsed.data.stampId }, "スタンプ", {
+    clientId: parsed.data.clientId ?? null,
+    replyToId
+  });
   res.status(201).json(toMessage(row, [], parsed.data.clientId ?? null));
 });
 

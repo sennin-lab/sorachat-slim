@@ -17,7 +17,7 @@ export type MessageRow = {
   id: string;
   conversation_id: string;
   sender_id: string;
-  kind: "text" | "contact" | "system" | "poll" | "game" | "call";
+  kind: "text" | "contact" | "system" | "poll" | "game" | "call" | "stamp";
   body: string | null;
   created_at: string;
   edited_at: string | null;
@@ -33,7 +33,8 @@ export type Content =
   | { kind: "contact"; contactUserId: string }
   | { kind: "poll"; question: string; options: string[]; multiple: boolean; anonymous?: boolean }
   | { kind: "game" }
-  | { kind: "call"; callId: string };
+  | { kind: "call"; callId: string }
+  | { kind: "stamp"; stampId: string };
 
 // 投票の中身（body に暗号化して保存する JSON）と、画面に返す形（票数・自分の選択つき）
 // closedAt は締め切った時刻（締め切るまでは null）。締め切りも body を書き換えて保存する
@@ -444,7 +445,9 @@ export async function insertMessage(
             ? { ...none, kind: "game", body: null }
             : content.kind === "call"
               ? { ...none, kind: "call", body: encryptText(content.callId) }
-              : { ...none, kind: "system", body: encryptText(content.body) };
+              : content.kind === "stamp"
+                ? { ...none, kind: "stamp", body: encryptText(content.stampId) }
+                : { ...none, kind: "system", body: encryptText(content.body) };
 
   const { data, error } = await sb
     .from("sc_messages")

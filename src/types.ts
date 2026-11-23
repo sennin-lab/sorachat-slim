@@ -43,7 +43,7 @@ export type Message = {
   conversationId: string;
   senderId: string;
   // system はグループのお知らせ（参加・退出・削除・名前の変更）
-  kind: "text" | "contact" | "system" | "poll" | "game" | "call";
+  kind: "text" | "contact" | "system" | "poll" | "game" | "call" | "stamp";
   body: string | null;
   contact?: { id: string; username: string; displayName: string; hasAvatar: boolean } | null;
   // 投票（kind が poll のとき）。body は質問文

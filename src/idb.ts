@@ -3,9 +3,9 @@
 // 非公開ブラウズ（プライベートモード）では保存しない（閉じると消えるため、通信量だけ増えてしまう）。
 
 const DB_NAME = "sorachat";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
-export type StoreName = "kv" | "avatars";
+export type StoreName = "kv" | "avatars" | "stamps";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 let privatePromise: Promise<boolean> | null = null;
@@ -22,6 +22,7 @@ const openDb = (): Promise<IDBDatabase> => {
         const db = req.result;
         if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv");
         if (!db.objectStoreNames.contains("avatars")) db.createObjectStore("avatars");
+        if (!db.objectStoreNames.contains("stamps")) db.createObjectStore("stamps");
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);

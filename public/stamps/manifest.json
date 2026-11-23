@@ -1,0 +1,35 @@
+{
+  "version": "1",
+  "items": [
+    {
+      "id": "smile",
+      "name": "にっこり",
+      "file": "smile.svg"
+    },
+    {
+      "id": "heart",
+      "name": "ハート",
+      "file": "heart.svg"
+    },
+    {
+      "id": "thanks",
+      "name": "ありがとう",
+      "file": "thanks.svg"
+    },
+    {
+      "id": "ok",
+      "name": "OK",
+      "file": "ok.svg"
+    },
+    {
+      "id": "sleepy",
+      "name": "おやすみ",
+      "file": "sleepy.svg"
+    },
+    {
+      "id": "party",
+      "name": "おめでとう",
+      "file": "party.svg"
+    }
+  ]
+}
