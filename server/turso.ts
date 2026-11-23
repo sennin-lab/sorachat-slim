@@ -29,14 +29,29 @@ export async function tursoExecute(sql: string, args: TursoArg[] = []): Promise<
       ]
     })
   });
-  const body = (await res.json().catch(() => null)) as {
+  // 失敗したときは、Turso が返した理由（error / message / 本文）をそのまま出す（原因を特定できるように）
+  const raw = await res.text();
+  let body: {
     results?: { type: string; response?: { type: string; result?: { rows: TursoValue[][] } }; error?: { message?: string } }[];
     message?: string;
-  } | null;
-  if (!res.ok) throw new Error(`Turso の呼び出しに失敗しました（${res.status}）: ${body?.message ?? ""}`);
+    error?: string | { message?: string };
+  } | null = null;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    body = null;
+  }
+  const statement = sql.replace(/\s+/g, " ").slice(0, 60);
+  if (!res.ok) {
+    const reason =
+      (typeof body?.error === "string" ? body.error : body?.error?.message) ??
+      body?.message ??
+      raw.slice(0, 300);
+    throw new Error(`Turso の呼び出しに失敗しました（${res.status}）: ${reason} [${statement}]`);
+  }
   const result = body?.results?.[0];
   if (!result || result.type !== "ok" || !result.response?.result) {
-    throw new Error(`Turso の呼び出しに失敗しました: ${result?.error?.message ?? "不明なエラー"}`);
+    throw new Error(`Turso の呼び出しに失敗しました: ${result?.error?.message ?? "不明なエラー"} [${statement}]`);
   }
   return result.response.result.rows;
 }
