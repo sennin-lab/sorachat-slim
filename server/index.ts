@@ -27,7 +27,16 @@ const app = express();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 app.set("trust proxy", 1);
-app.use(helmet());
+// 画像は blob:（保存済みのアイコンを表示するため）も許可する。helmet の既定だと img-src は data: しか許されない
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        "img-src": ["'self'", "data:", "blob:"]
+      }
+    }
+  })
+);
 app.use(express.json({ limit: "32kb" }));
 app.use(cookieParser());
 

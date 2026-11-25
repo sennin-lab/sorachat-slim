@@ -2586,3 +2586,21 @@ button[aria-busy="true"] { animation: sc-soft-pulse 1.4s ease-in-out infinite; }
 .stamp-sheet .stamp-grid button { display: flex; flex-direction: column; align-items: center; gap: 4px; background: none; border: 0; padding: 6px; cursor: pointer; }
 .stamp-sheet .stamp-grid small { font-size: 11px; color: var(--muted); }
 .stamp-sheet .stamp-empty { text-align: center; color: var(--muted); padding: 24px 0; }
+
+/* ダミーのデモサイト（/admin の入口）。管理者ログインへ進むボタンは目立たせない */
+.demo-site { min-height: 100%; display: flex; flex-direction: column; background: var(--bg); color: var(--text, #1d2733); }
+.demo-site-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.demo-site-brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+.demo-site-mark { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent, #3b8ee6); color: #fff; font-size: 14px; }
+.demo-site-tag { font-size: 12px; color: var(--muted, #6b7a8c); }
+.demo-site-main { flex: 1; padding: 40px 20px; max-width: 880px; width: 100%; margin: 0 auto; }
+.demo-site-hero { text-align: center; padding: 24px 0 36px; }
+.demo-site-hero h1 { margin: 0 0 12px; font-size: 26px; }
+.demo-site-hero p { margin: 0 0 22px; color: var(--muted, #6b7a8c); }
+.demo-site-cta { padding: 12px 28px; border: 0; border-radius: 999px; background: var(--accent, #3b8ee6); color: #fff; font-weight: 700; opacity: 0.6; }
+.demo-site-cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.demo-site-cards article { padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--bg-soft); }
+.demo-site-cards h2 { margin: 0 0 6px; font-size: 16px; }
+.demo-site-cards p { margin: 0; font-size: 14px; color: var(--muted, #6b7a8c); }
+.demo-site-foot { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted, #6b7a8c); }
+.demo-site-admin { border: 0; background: none; color: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; padding: 6px; }

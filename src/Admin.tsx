@@ -4,6 +4,7 @@ import { Avatar } from "./Avatar";
 import { formatRemaining } from "./Banned";
 import { TEAM_ID } from "./team";
 import { ManualIpModal } from "./ManualIpModal";
+import { DemoSite } from "./DemoSite";
 
 import type { BanInfo } from "./types";
 
@@ -59,6 +60,8 @@ async function adminApi<T>(path: string, init?: RequestInit): Promise<T> {
 export function AdminApp() {
   const [path, setPath] = useState(window.location.pathname);
   const [session, setSession] = useState<"checking" | "in" | "out">("checking");
+  // 未ログインのとき、/admin はダミーのデモサイトを出す。「管理者ログイン」を押したらログイン画面に進む
+  const [loginOpen, setLoginOpen] = useState(false);
 
   const go = (to: string) => {
     window.history.pushState({}, "", to);
@@ -81,10 +84,14 @@ export function AdminApp() {
 
   if (session === "checking") return <div className="boot">読み込み中…</div>;
   if (session === "out") {
+    if (!loginOpen && path !== "/admin/login") {
+      return <DemoSite onAdminLogin={() => setLoginOpen(true)} />;
+    }
     return (
       <AdminLogin
         onDone={() => {
           setSession("in");
+          setLoginOpen(false);
           go("/admin");
         }}
       />

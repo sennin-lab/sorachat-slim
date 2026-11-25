@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { avatarObjectUrl, cachedAvatar, dropAvatarObjectUrl, groupAvatarObjectUrl, knownAvatarVersion, onAvatarCacheChange } from "./avatarCache";
 import { RobotFace, SENNIN_BOT_ID } from "./robot";
 
@@ -10,7 +10,13 @@ const MAX_RECOVER = 8;
 
 // 写真があれば写真、なければ名前の1文字。src を渡すとグループなど別の画像URLを使う
 // 友だちの画像は、保存済みのもの（localStorage → IndexedDB）があればデータベースに問い合わせる前に表示する
-export function Avatar({
+// 人（と画像の出所）が変わるたびに、表示の状態を作り直す。
+// 同じ部品を別の人に使い回すと、前の人の画像・読めなかった記録が残って、別の人の画像に見えてしまうため。
+export function Avatar(props: ComponentProps<typeof AvatarInner>) {
+  return <AvatarInner key={`${props.userId}|${props.src ?? ""}`} {...props} />;
+}
+
+function AvatarInner({
   userId,
   hasAvatar,
   name,
@@ -176,7 +182,13 @@ export function GroupAvatar({
   size?: number;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  // 保存済みの画像（blob）が表示できなかったときは、サーバーのURLから直接読む
+  const [direct, setDirect] = useState(false);
   const version = hasAvatar ? avatarVersion ?? null : null;
+
+  useEffect(() => {
+    setDirect(false);
+  }, [conversationId, version]);
 
   useEffect(() => {
     let alive = true;
@@ -194,7 +206,9 @@ export function GroupAvatar({
 
   const initial = name.trim().charAt(0).toUpperCase() || "?";
   const style = { width: size, height: size, fontSize: Math.round(size * 0.42) };
-  if (!url) {
+  const remote = version ? `/api/dm/${conversationId}/avatar?v=${encodeURIComponent(version)}` : null;
+  const src = direct ? remote : url;
+  if (!src) {
     return (
       <span className="avatar" style={style} aria-hidden="true">
         {initial}
@@ -205,10 +219,14 @@ export function GroupAvatar({
     <img
       className="avatar"
       style={style}
-      src={url}
+      src={src}
       alt=""
       onError={() => {
-        // 表示できなかったら文字のアイコンに戻す（次に版が変わったときに取り直す）
+        if (!direct && url && remote) {
+          setDirect(true);
+          return;
+        }
+        // サーバーのURLも読めなかったときは文字のアイコンに戻す（次に版が変わったときに取り直す）
         setUrl(null);
       }}
     />
