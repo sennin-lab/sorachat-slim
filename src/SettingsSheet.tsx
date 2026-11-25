@@ -4,6 +4,8 @@ import { Icon } from "./Icon";
 import { disablePush, enablePush, testPush } from "./push";
 import { getShowUnsent, setShowUnsent } from "./prefs";
 import { getLiquidIcon, setLiquidIcon } from "./iconPrefs";
+import { refreshLocalData, resetLocalData } from "./cache";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type { Me } from "./types";
 
 // 設定（LINE の設定画面のように、項目をグループ分けして表示する）
@@ -29,6 +31,7 @@ export function SettingsSheet({
   const [status, setStatus] = useState("");
   const [testMessage, setTestMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   // ブロックしている人の一覧（ここから解除できる）
   const [blockedList, setBlockedList] = useState<{ id: string; displayName: string }[]>([]);
@@ -81,6 +84,36 @@ export function SettingsSheet({
       setNotify(!on);
       setStatus(err instanceof ApiError ? err.message : "通知の設定を変更できませんでした。");
     } finally {
+      setBusy(false);
+    }
+  };
+
+  // 「データを更新」：保存したトークやアイコンを消して、最新の内容を取り直す（設定は残す）
+  const refreshData = async () => {
+    setBusy(true);
+    setStatus("");
+    try {
+      await refreshLocalData();
+      // アプリの更新（新しい版があれば取り込む）も確認する
+      const registration = await navigator.serviceWorker?.getRegistration();
+      await registration?.update().catch(() => undefined);
+      window.location.reload();
+    } catch {
+      setStatus("データを更新できませんでした。");
+      setBusy(false);
+    }
+  };
+
+  // 「リセット」：この端末のアプリのデータをすべて消して、読み込み直す
+  const resetData = async () => {
+    setBusy(true);
+    setStatus("");
+    try {
+      await resetLocalData();
+      window.location.reload();
+    } catch {
+      setConfirmReset(false);
+      setStatus("リセットできませんでした。");
       setBusy(false);
     }
   };
@@ -239,6 +272,22 @@ export function SettingsSheet({
       </div>
 
       <div className="section-label flush">
+        <span>データ</span>
+      </div>
+      <div className="page-card">
+        <button className="page-row" disabled={busy} onClick={() => void refreshData()}>
+          <span>データを更新</span>
+        </button>
+        <button className="page-row danger" disabled={busy} onClick={() => setConfirmReset(true)}>
+          <span>リセット</span>
+        </button>
+      </div>
+      <p className="notice center small">
+        データを更新は、この端末に保存したトークやアイコンを消して、最新の内容を取り直します。
+        リセットは、表示の設定や機能紹介の表示状態も含めて、この端末のアプリのデータをすべて消します。アカウントやトークの内容は消えません。
+      </p>
+
+      <div className="section-label flush">
         <span>アカウント</span>
       </div>
       <div className="page-card">
@@ -248,6 +297,18 @@ export function SettingsSheet({
       </div>
 
       {status && <p className="notice center error shake">{status}</p>}
+
+      {confirmReset && (
+        <ConfirmDialog
+          title="リセットしますか？"
+          message="この端末のアプリのデータ（表示の設定を含む）をすべて消して、読み込み直します。元に戻せません。"
+          confirmLabel="リセット"
+          danger
+          busy={busy}
+          onConfirm={() => void resetData()}
+          onCancel={() => setConfirmReset(false)}
+        />
+      )}
     </div>
   );
 }

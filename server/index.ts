@@ -1,6 +1,4 @@
 import express from "express";
-import cookieParser from "cookie-parser";
-import helmet from "helmet";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -22,23 +20,12 @@ import { attachRealtime } from "./realtime.js";
 import { initializeMaintenanceSettings, maintenanceGate } from "./maintenance.js";
 import { getStatus } from "./status.js";
 import { ipBanGate, reloadIpBans } from "./ipBans.js";
+import { applySecurity } from "./security.js";
 
 const app = express();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-app.set("trust proxy", 1);
-// 画像は blob:（保存済みのアイコンを表示するため）も許可する。helmet の既定だと img-src は data: しか許されない
-app.use(
-  helmet({
-    contentSecurityPolicy: {
-      directives: {
-        "img-src": ["'self'", "data:", "blob:"]
-      }
-    }
-  })
-);
-app.use(express.json({ limit: "32kb" }));
-app.use(cookieParser());
+applySecurity(app);
 
 // BAN された IP は、管理者と状態表示を除いて /api を使えない（メンテナンスより前に止める）
 app.use(ipBanGate);

@@ -1,17 +1,14 @@
 import crypto from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import { config } from "./config.js";
+import { cookieBase } from "./security.js";
 import { sb } from "./supabase.js";
 
 export const SESSION_COOKIE = "sc_session";
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 
-export const cookieBase = {
-  httpOnly: true,
-  sameSite: "lax" as const,
-  secure: config.nodeEnv === "production",
-  path: "/"
-};
+// Cookie の共通設定は security.ts にまとめてある
+export { cookieBase } from "./security.js";
 
 export const sha256 = (value: string) => crypto.createHash("sha256").update(value).digest("hex");
 export const randomToken = (bytes = 32) => crypto.randomBytes(bytes).toString("base64url");

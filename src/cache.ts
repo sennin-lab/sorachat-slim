@@ -75,3 +75,37 @@ export function clearCache() {
   void idbClear("kv");
   void idbClear("avatars");
 }
+
+// 設定の「データを更新」：会話・メッセージ・画像・スタンプの保存を消す。
+// 表示の設定（ダークモード・アイコン・送信取り消しの表示）と機能紹介の表示状態は残す
+export async function refreshLocalData() {
+  try {
+    Object.keys(localStorage)
+      .filter(
+        (key) =>
+          key === LIST_KEY ||
+          key === "sorachat.friends" ||
+          key === ME_KEY ||
+          key.startsWith("sorachat.messages.") ||
+          key.startsWith("sorachat.people.") ||
+          key.startsWith("sorachat.avatar.")
+      )
+      .forEach((key) => localStorage.removeItem(key));
+  } catch {
+    // localStorage が使えなくても、IndexedDB の掃除は続ける
+  }
+  await Promise.all([idbClear("kv"), idbClear("avatars"), idbClear("stamps")]);
+}
+
+// 設定の「リセット」：この端末のアプリの保存を、すべて消す（表示の設定・機能紹介の表示状態も含む）。
+// アカウントやトークの中身（サーバー側）は消えない
+export async function resetLocalData() {
+  try {
+    Object.keys(localStorage)
+      .filter((key) => key.startsWith("sorachat"))
+      .forEach((key) => localStorage.removeItem(key));
+  } catch {
+    // localStorage が使えなくても、IndexedDB の掃除は続ける
+  }
+  await Promise.all([idbClear("kv"), idbClear("avatars"), idbClear("stamps")]);
+}
