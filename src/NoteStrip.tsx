@@ -2,9 +2,13 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Avatar } from "./Avatar";
 import { NoteSheet } from "./NoteSheet";
-import type { Friend, Me } from "./types";
+import type { Me } from "./types";
 
-type SelfNote = { id: string; body: string; expiresAt: string } | null;
+type NoteInfo = { id: string; body: string; expiresAt: string };
+type SelfNote = NoteInfo | null;
+// 帯に必要な分だけ（ノートのある友だち）。友だちの詳細は含まない
+type StripFriend = { id: string; displayName: string; hasAvatar: boolean; avatarVersion?: string | null; note: NoteInfo };
+type StripData = { self: SelfNote; friends: StripFriend[] };
 
 const isLive = (note: { expiresAt: string } | null | undefined) => Boolean(note && Date.parse(note.expiresAt) > Date.now());
 
@@ -22,16 +26,20 @@ export function NoteStrip({
   onOpenUser: (id: string) => void;
 }) {
   const [selfNote, setSelfNote] = useState<SelfNote>(null);
-  const [friends, setFriends] = useState<Friend[]>([]);
+  const [friends, setFriends] = useState<StripFriend[]>([]);
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
 
+  // 1回の通信で、自分のノートと、ノートのある友だちだけをもらう
   useEffect(() => {
-    api<SelfNote>("/api/me/note")
-      .then((note) => setSelfNote(isLive(note) ? note : null))
-      .catch(() => setSelfNote(null));
-    api<Friend[]>("/api/friends")
-      .then((list) => setFriends(list.filter((f) => isLive(f.note))))
-      .catch(() => setFriends([]));
+    api<StripData>("/api/notes/strip")
+      .then((data) => {
+        setSelfNote(isLive(data.self) ? data.self : null);
+        setFriends(data.friends.filter((f) => isLive(f.note)));
+      })
+      .catch(() => {
+        setSelfNote(null);
+        setFriends([]);
+      });
   }, [version]);
 
   return (

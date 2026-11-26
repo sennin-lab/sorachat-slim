@@ -1,3 +1,4 @@
+import compression from "compression";
 import express from "express";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
@@ -27,6 +28,8 @@ const app = express();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 applySecurity(app);
+// 転送量を減らす：JSON・HTML・JS・CSS を gzip / brotli で圧縮して送る（画像などは圧縮の効きが弱いので対象外にしない）
+app.use(compression());
 
 // BAN された IP は、管理者と状態表示を除いて /api を使えない（メンテナンスより前に止める）
 app.use(ipBanGate);
@@ -61,6 +64,8 @@ app.use("/api", (_req, res) => {
 
 const dist = path.join(root, "dist");
 if (existsSync(path.join(dist, "index.html"))) {
+  // ビルドで名前に版が入るファイル（/assets）は内容が変わらないので、長く覚えさせる
+  app.use("/assets", express.static(path.join(dist, "assets"), { index: false, maxAge: "1y", immutable: true }));
   app.use(express.static(dist, { index: false, maxAge: "1h" }));
   app.use((req, res, next) => {
     if (req.method !== "GET") return next();

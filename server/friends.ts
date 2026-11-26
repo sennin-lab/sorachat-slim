@@ -95,7 +95,7 @@ async function befriend(a: string, b: string) {
 }
 
 // 有効期限の内にあるノートだけを、ユーザーごとに1件ずつ取る（1回の問い合わせにまとめる）
-async function activeNotesOf(ids: string[]): Promise<Map<string, { id: string; body: string; expiresAt: string }>> {
+export async function activeNotesOf(ids: string[]): Promise<Map<string, { id: string; body: string; expiresAt: string }>> {
   const notes = new Map<string, { id: string; body: string; expiresAt: string }>();
   if (!ids.length) return notes;
   const { data, error } = await sb

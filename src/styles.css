@@ -2790,6 +2790,7 @@ button.profile-avatar { padding: 0; font: inherit; color: inherit; }
 }
 /* ---- トーク上部のノートの帯（自分と、ノートのある友だちだけ。友だち一覧の表示とは別） ---- */
 .note-strip {
+  flex: none;
   display: flex;
   align-items: flex-end;
   gap: 14px;

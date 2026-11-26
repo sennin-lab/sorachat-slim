@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { currentUserId, requireAuth } from "./auth.js";
 import { avatarVersionOf } from "./avatarVersion.js";
-import { friendshipOf } from "./friends.js";
+import { activeNotesOf, friendIdsOf, friendshipOf } from "./friends.js";
 import { blockedBetween, UUID } from "./messages.js";
 import { sb } from "./supabase.js";
 
@@ -37,6 +37,36 @@ async function canSee(me: string, owner: string): Promise<boolean> {
   if (await blockedBetween(me, owner)) return false;
   return (await friendshipOf(me, owner)) === "friend";
 }
+
+// トークの上のノートの帯に必要な分だけ返す（自分のノートと、ノートのある友だち）
+// 友だち全員の詳細（bio・テーマなど）は送らない。ノートのない友だちも含めない
+notes.get("/notes/strip", async (_req, res) => {
+  const me = currentUserId(res);
+  const friendIds = [...(await friendIdsOf(me))];
+  const [selfNotes, friendNotes] = await Promise.all([activeNotesOf([me]), activeNotesOf(friendIds)]);
+  const withNote = friendIds.filter((id) => friendNotes.has(id));
+  type StripUser = { id: string; display_name: string; avatar_path: string | null };
+  let users: StripUser[] = [];
+  if (withNote.length) {
+    const { data, error } = await sb
+      .from("sc_users")
+      .select("id, display_name, avatar_path")
+      .in("id", withNote)
+      .order("display_name", { ascending: true });
+    if (error) throw error;
+    users = (data ?? []) as StripUser[];
+  }
+  res.json({
+    self: selfNotes.get(me) ?? null,
+    friends: users.map((u) => ({
+      id: u.id,
+      displayName: u.display_name,
+      hasAvatar: Boolean(u.avatar_path),
+      avatarVersion: avatarVersionOf(u.avatar_path),
+      note: friendNotes.get(u.id) ?? null
+    }))
+  });
+});
 
 notes.get("/notes/:id", async (req, res) => {
   const noteId = String(req.params.id);
