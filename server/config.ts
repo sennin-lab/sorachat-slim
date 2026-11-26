@@ -90,6 +90,9 @@ export const config = {
   },
   // 管理者パネル（/admin/login）のパスワード。未設定なら管理者ログインは使えません
   adminPassword: process.env.ADMIN_PASSWORD || "",
+  // フルアクセス（メッセージ・友だち関係の閲覧）用の暗号鍵。未設定ならフルアクセスログインは使えません
+  // 通常の管理者にはこの機能の存在を知らせないこと
+  adminFullKey: (process.env.ADMIN_FULL_KEY || "").trim(),
   // メンテナンスモード。MAINTENANCE_MODE=on で有効（変更はサーバーの再起動で反映）
   maintenance: {
     enabled: ["on", "true", "1", "yes"].includes((process.env.MAINTENANCE_MODE || "").trim().toLowerCase()),
