@@ -4,6 +4,7 @@ import { cachedFriends, saveFriends, syncAvatars } from "./avatarCache";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { NoteSheet } from "./NoteSheet";
+import { NoteStrip } from "./NoteStrip";
 import { UserRow } from "./UserRow";
 import type { Friend, Me } from "./types";
 
@@ -112,6 +113,8 @@ export function FriendsTab({
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="検索" aria-label="友だちを検索" />
         </label>
       </div>
+
+      <NoteStrip me={me} version={version} onOpenMe={onOpenMe} onOpenUser={onOpenUser} />
 
       <ul className="user-list-ul">
         <li className="user-li" style={{ "--i": 0 } as CSSProperties}>

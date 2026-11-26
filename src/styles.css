@@ -2788,3 +2788,63 @@ button.profile-avatar { padding: 0; font: inherit; color: inherit; }
   .demo-site-hero { padding: 28px 0 24px; }
   .demo-site-hero h1 { font-size: 24px; }
 }
+/* ---- トーク上部のノートの帯（自分と、ノートのある友だちだけ。友だち一覧の表示とは別） ---- */
+.note-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  padding: 10px 16px 14px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.note-strip::-webkit-scrollbar { display: none; }
+.note-strip-item {
+  flex: none;
+  min-width: 84px;
+  max-width: 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.note-strip-slot {
+  max-width: 100%;
+  min-height: 34px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+}
+.note-strip-bubble {
+  max-width: 150px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--bubble-in);
+  color: var(--bubble-in-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.note-strip-avatar {
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 50%;
+  cursor: pointer;
+  line-height: 0;
+}
+.note-strip-avatar:active { opacity: 0.7; }
+.note-strip-name {
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
