@@ -2645,7 +2645,7 @@ button[aria-busy="true"] { animation: sc-soft-pulse 1.4s ease-in-out infinite; }
 .user-row .user-main:hover { opacity: 0.8; }
 
 /* メッセージのスワイプ返信（右から左へ引く） */
-.swipe-reply { position: relative; overflow: hidden; }
+.swipe-reply { position: relative; overflow: hidden; flex: none; }
 .swipe-body { position: relative; z-index: 1; will-change: transform; }
 .swipe-hint {
   position: absolute;
