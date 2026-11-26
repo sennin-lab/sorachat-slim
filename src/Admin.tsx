@@ -60,6 +60,8 @@ async function adminApi<T>(path: string, init?: RequestInit): Promise<T> {
 export function AdminApp() {
   const [path, setPath] = useState(window.location.pathname);
   const [session, setSession] = useState<"checking" | "in" | "out">("checking");
+  // フルアクセス（メッセージ・友だち関係の閲覧）。通常管理者にはこの状態を見せない
+  const [fullAccess, setFullAccess] = useState(false);
   // 未ログインのとき、/admin はダミーのデモサイトを出す。「管理者ログイン」を押したらログイン画面に進む
   const [loginOpen, setLoginOpen] = useState(false);
 
@@ -67,6 +69,8 @@ export function AdminApp() {
     window.history.pushState({}, "", to);
     setPath(to);
   };
+
+  const isFullLoginPath = path === "/admin/full/login" || path.startsWith("/admin/full/login");
 
   useEffect(() => {
     const onPop = () => setPath(window.location.pathname);
@@ -76,11 +80,43 @@ export function AdminApp() {
     adminApi("/api/admin/session")
       .then(() => setSession("in"))
       .catch(() => setSession("out"));
+    // フルアクセスの有無は別クッキー。失敗しても通常管理者には何も出さない
+    api("/api/admin/full/session")
+      .then(() => setFullAccess(true))
+      .catch(() => setFullAccess(false));
     return () => {
       window.removeEventListener("popstate", onPop);
       window.removeEventListener("admin-expired", onExpired);
     };
   }, []);
+
+  // フルアクセス済みで /admin/full/login に来たら管理画面へ
+  useEffect(() => {
+    if (isFullLoginPath && fullAccess && session === "in") {
+      go("/admin");
+    }
+  }, [isFullLoginPath, fullAccess, session]);
+
+  // チャット画面はフルアクセス時のみ
+  useEffect(() => {
+    if (session !== "in") return;
+    if (/^\/admin\/chats\//i.test(path) && !fullAccess) {
+      go("/admin");
+    }
+  }, [path, fullAccess, session]);
+
+  // /admin/full/login は管理者セッションがなくても開ける（暗号鍵のみ）
+  if (isFullLoginPath) {
+    return (
+      <FullAccessLogin
+        onDone={() => {
+          setFullAccess(true);
+          if (session === "in") go("/admin");
+          else go("/admin/login");
+        }}
+      />
+    );
+  }
 
   if (session === "checking") return <div className="boot">読み込み中…</div>;
   if (session === "out") {
@@ -103,7 +139,9 @@ export function AdminApp() {
 
   const logout = async () => {
     await api("/api/admin/logout", post()).catch(() => undefined);
+    await api("/api/admin/full/logout", post()).catch(() => undefined);
     setSession("out");
+    setFullAccess(false);
     go("/admin/login");
   };
 
@@ -122,11 +160,11 @@ export function AdminApp() {
       </header>
       <main className="admin-main">
         {userMatch ? (
-          <UserPage id={userMatch[1]} go={go} />
-        ) : chatMatch ? (
+          <UserPage id={userMatch[1]} go={go} fullAccess={fullAccess} />
+        ) : chatMatch && fullAccess ? (
           <ChatPage id={chatMatch[1]} go={go} />
         ) : (
-          <Dashboard go={go} />
+          <Dashboard go={go} fullAccess={fullAccess} />
         )}
       </main>
     </div>
@@ -174,36 +212,82 @@ function AdminLogin({ onDone }: { onDone: () => void }) {
   );
 }
 
+/** フルアクセス用ログイン。URL を知っている人だけ。通常の管理者画面からはリンクしない */
+function FullAccessLogin({ onDone }: { onDone: () => void }) {
+  const [key, setKey] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api("/api/admin/full/login", post({ key }));
+      onDone();
+    } catch (err) {
+      setError(msg(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="admin-login">
+      <form className="admin-login-card" onSubmit={submit}>
+        <span className="admin-brand-mark large">S</span>
+        <h1>暗号鍵を入力してください</h1>
+        <p className="muted small">続行するには暗号鍵が必要です</p>
+        <input
+          className="auth-input"
+          type="password"
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          autoComplete="off"
+          placeholder="暗号鍵"
+        />
+        {error && <p className="notice error center">{error}</p>}
+        <button className="btn-primary wide" disabled={busy || !key}>
+          続行
+        </button>
+      </form>
+    </div>
+  );
+}
+
 type Go = (to: string) => void;
 
-function Dashboard({ go }: { go: Go }) {
+function Dashboard({ go, fullAccess }: { go: Go; fullAccess: boolean }) {
   const [tab, setTab] = useState<"users" | "chats" | "news" | "maintenance" | "ip">("users");
+  // フルアクセスでないときはチャットタブを出さない（通常管理者に存在を知らせない）
+  const effectiveTab = !fullAccess && tab === "chats" ? "users" : tab;
   return (
     <>
       <div className="admin-segment" role="tablist">
-        <button role="tab" aria-selected={tab === "users"} className={tab === "users" ? "on" : ""} onClick={() => setTab("users")}>
+        <button role="tab" aria-selected={effectiveTab === "users"} className={effectiveTab === "users" ? "on" : ""} onClick={() => setTab("users")}>
           ユーザー
         </button>
-        <button role="tab" aria-selected={tab === "chats"} className={tab === "chats" ? "on" : ""} onClick={() => setTab("chats")}>
-          チャット
-        </button>
-        <button role="tab" aria-selected={tab === "news"} className={tab === "news" ? "on" : ""} onClick={() => setTab("news")}>
+        {fullAccess && (
+          <button role="tab" aria-selected={effectiveTab === "chats"} className={effectiveTab === "chats" ? "on" : ""} onClick={() => setTab("chats")}>
+            チャット
+          </button>
+        )}
+        <button role="tab" aria-selected={effectiveTab === "news"} className={effectiveTab === "news" ? "on" : ""} onClick={() => setTab("news")}>
           お知らせ
         </button>
-        <button role="tab" aria-selected={tab === "maintenance"} className={tab === "maintenance" ? "on" : ""} onClick={() => setTab("maintenance")}>
+        <button role="tab" aria-selected={effectiveTab === "maintenance"} className={effectiveTab === "maintenance" ? "on" : ""} onClick={() => setTab("maintenance")}>
           メンテナンス
         </button>
-        <button role="tab" aria-selected={tab === "ip"} className={tab === "ip" ? "on" : ""} onClick={() => setTab("ip")}>
+        <button role="tab" aria-selected={effectiveTab === "ip"} className={effectiveTab === "ip" ? "on" : ""} onClick={() => setTab("ip")}>
           IP BAN
         </button>
       </div>
-      {tab === "users" ? (
+      {effectiveTab === "users" ? (
         <UsersList go={go} />
-      ) : tab === "chats" ? (
+      ) : effectiveTab === "chats" && fullAccess ? (
         <ChatsList go={go} />
-      ) : tab === "news" ? (
+      ) : effectiveTab === "news" ? (
         <AnnouncementPanel />
-      ) : tab === "ip" ? (
+      ) : effectiveTab === "ip" ? (
         <IpBanPanel />
       ) : (
         <MaintenancePanel />
@@ -455,7 +539,7 @@ function ChatsList({ go }: { go: Go }) {
   );
 }
 
-function UserPage({ id, go }: { id: string; go: Go }) {
+function UserPage({ id, go, fullAccess }: { id: string; go: Go; fullAccess: boolean }) {
   const [user, setUser] = useState<UserDetail | null>(null);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
@@ -550,6 +634,7 @@ function UserPage({ id, go }: { id: string; go: Go }) {
 
       <PasswordPanel user={user} onChanged={changed} onError={setStatus} />
 
+      {/* 友だちの追加は通常管理者も可能（操作のみ）。一覧・関係の閲覧はフルアクセス時のみ */}
       <section className="admin-card">
         <h3 className="admin-section-title">友だちを追加</h3>
         <p className="muted small">管理者は、相手の承認なしで誰とでも友だちにできます。</p>
@@ -561,53 +646,57 @@ function UserPage({ id, go }: { id: string; go: Go }) {
         </form>
       </section>
 
-      <section className="admin-card">
-        <h3 className="admin-section-title">友だち（{user.friends.length}人）</h3>
-        {user.friends.length === 0 ? (
-          <p className="muted small">友だちはいません。</p>
-        ) : (
-          <ul className="admin-list">
-            {user.friends.map((f) => (
-              <li key={f.id}>
-                <button className="admin-row" onClick={() => go(`/admin/users/${f.id}`)}>
-                  <Avatar userId={f.id} hasAvatar={f.hasAvatar} name={f.displayName} size={36} src={`/api/admin/users/${f.id}/avatar`} />
-                  <span className="admin-row-text">
-                    <strong>{f.displayName}</strong>
-                    <small>@{f.username}</small>
-                  </span>
-                  <BanTag ban={f.ban} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {fullAccess && (
+        <>
+          <section className="admin-card">
+            <h3 className="admin-section-title">友だち（{user.friends.length}人）</h3>
+            {user.friends.length === 0 ? (
+              <p className="muted small">友だちはいません。</p>
+            ) : (
+              <ul className="admin-list">
+                {user.friends.map((f) => (
+                  <li key={f.id}>
+                    <button className="admin-row" onClick={() => go(`/admin/users/${f.id}`)}>
+                      <Avatar userId={f.id} hasAvatar={f.hasAvatar} name={f.displayName} size={36} src={`/api/admin/users/${f.id}/avatar`} />
+                      <span className="admin-row-text">
+                        <strong>{f.displayName}</strong>
+                        <small>@{f.username}</small>
+                      </span>
+                      <BanTag ban={f.ban} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-      <section className="admin-card">
-        <h3 className="admin-section-title">参加しているチャット（{user.conversations.length}件）</h3>
-        {user.conversations.length === 0 ? (
-          <p className="muted small">参加しているチャットはありません。</p>
-        ) : (
-          <ul className="admin-list">
-            {user.conversations.map((c) => (
-              <li key={c.id}>
-                <button className="admin-row" onClick={() => go(`/admin/chats/${c.id}`)}>
-                  <span className="admin-chat-icon" aria-hidden="true">
-                    {c.isGroup ? "◎" : "●"}
-                  </span>
-                  <span className="admin-row-text">
-                    <strong>
-                      {c.name}
-                      {c.isOpen && <small className="admin-badge">オープン</small>}
-                    </strong>
-                    <small>{c.memberCount}人</small>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+          <section className="admin-card">
+            <h3 className="admin-section-title">参加しているチャット（{user.conversations.length}件）</h3>
+            {user.conversations.length === 0 ? (
+              <p className="muted small">参加しているチャットはありません。</p>
+            ) : (
+              <ul className="admin-list">
+                {user.conversations.map((c) => (
+                  <li key={c.id}>
+                    <button className="admin-row" onClick={() => go(`/admin/chats/${c.id}`)}>
+                      <span className="admin-chat-icon" aria-hidden="true">
+                        {c.isGroup ? "◎" : "●"}
+                      </span>
+                      <span className="admin-row-text">
+                        <strong>
+                          {c.name}
+                          {c.isOpen && <small className="admin-badge">オープン</small>}
+                        </strong>
+                        <small>{c.memberCount}人</small>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
+      )}
     </>
   );
 }
