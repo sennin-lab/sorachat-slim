@@ -9,7 +9,7 @@ import { sb } from "./supabase.js";
 // senninai（AIチャット）
 // sc_users に固定IDのボットとして登録する（schema_v12.sql。パスワードがないのでログインはできない）。
 // ボットとのDMと、グループへの参加はふつうの会話・メンバーとして扱うので、送信・一覧・通知の仕組みをそのまま使う。
-// AIの回答は UserLocal（SENNIN_AI_URL）に問い合わせる。AIに話しかけた内容は外部サービスへ送られる点に注意。
+// AIの回答は Groq（GROQ_API_KEY があるとき）か、UserLocal（SENNIN_AI_URL）に問い合わせる。AIに話しかけた内容は外部サービスへ送られる点に注意。
 
 export const BOT_ID = "5e11a1ab-0000-4000-8000-000000000001";
 export const BOT_NAME = "senninai";
@@ -218,8 +218,9 @@ export async function disableAi(userId: string): Promise<void> {
   sendToUser(userId, { type: "list" });
 }
 
-// UserLocal（senninai API）に問い合わせる。messages は直近の会話（履歴は5件まで）
+// AIに問い合わせる。Groq の鍵があれば Groq、なければ UserLocal（senninai API）を使う
 export async function askAi(messages: { role: "user" | "assistant"; content: string }[], maxChars = MAX_REPLY): Promise<string> {
+  if (config.groq.apiKey) return finishAnswer(await groqAnswer(messages, maxChars), maxChars, "");
   // API仕様：履歴は直近5件まで、content は文字列、先頭は user にそろえる（AIの案内文から始まると受け付けない場合がある）
   // 送る量も抑える（仕様書に上限の記載はないため、長い会話で 400 になるのを防ぐ）
   const recent = messages.slice(-5).filter((m) => typeof m.content === "string" && m.content.length > 0);
@@ -250,12 +251,58 @@ export async function askAi(messages: { role: "user" | "assistant"; content: str
     throw new Error(`senninai API がエラーを返しました（HTTP ${response.status}）: ${raw.slice(0, 200)}`);
   }
   // 応答の形（OpenAI互換・answer・text など）のどれでも回答を読む
-  // 回答が改行を「\n」という文字として返してくることがあるため、改行を含まない回答だけ改行に戻す
-  // （コードの中の \n は、改行を含む回答ではそのまま残す）
-  const picked = (data ? pickAnswer(data) : raw).trim();
-  const answer = !picked.includes("\n") && picked.includes("\\n") ? picked.replace(/\\n/g, "\n") : picked;
-  if (!answer) throw new Error(`senninai API の回答を読めませんでした: ${raw.slice(0, 200)}`);
+  return finishAnswer(data ? pickAnswer(data) : raw, maxChars, raw);
+}
+
+// 回答の整え方（両方の接続先で共通）：改行を「\n」という文字として返すことがあるので、改行を含まない回答だけ改行に戻す。長すぎる回答は切る
+function finishAnswer(picked: string, maxChars: number, raw: string): string {
+  const trimmed = picked.trim();
+  const answer = !trimmed.includes("\n") && trimmed.includes("\\n") ? trimmed.replace(/\\n/g, "\n") : trimmed;
+  if (!answer) throw new Error(`senninai の回答を読めませんでした: ${raw.slice(0, 200)}`);
   return answer.length > maxChars ? `${answer.slice(0, maxChars)}…` : answer;
+}
+
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_HISTORY = 12;
+
+// Groq（OpenAI互換の Chat Completions）に問い合わせる。直近の会話を送る。混雑（429・5xx）と通信の失敗は、少し待って1回だけ試す
+async function groqAnswer(messages: { role: "user" | "assistant"; content: string }[], maxChars: number): Promise<string> {
+  const recent = messages.slice(-GROQ_HISTORY).filter((m) => typeof m.content === "string" && m.content.length > 0);
+  const start = recent.findIndex((m) => m.role === "user");
+  const sent = (start === -1 ? recent : recent.slice(start)).map((m) => ({ role: m.role, content: m.content.slice(0, MAX_SENT_CHARS) }));
+  const body = JSON.stringify({
+    model: config.groq.model,
+    messages: sent,
+    temperature: 0.7,
+    max_tokens: Math.min(8192, Math.ceil(maxChars * 1.5))
+  });
+  let response: Response | null = null;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      response = await fetch(GROQ_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${config.groq.apiKey}` },
+        body,
+        signal: AbortSignal.timeout(30_000)
+      });
+      if (response.status !== 429 && response.status < 500) break;
+      lastError = new Error(`Groq API がエラーを返しました（HTTP ${response.status}）`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  if (!response) throw lastError instanceof Error ? lastError : new Error("Groq に接続できませんでした");
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`Groq API がエラーを返しました（HTTP ${response.status}）: ${raw.slice(0, 200)}`);
+  let data: { choices?: { message?: { content?: string | null } }[] } | null = null;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    data = null;
+  }
+  return data?.choices?.[0]?.message?.content ?? "";
 }
 
 function postToAi(messages: { role: "user" | "assistant"; content: string }[]) {

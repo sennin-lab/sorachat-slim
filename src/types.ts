@@ -11,6 +11,8 @@ export type Me = {
   // 画像の版（変わったら値も変わる）。保存済みの画像を使うかの判断に使う
   avatarVersion?: string | null;
   notifyDm: boolean;
+  // 通知に本文（メッセージの一部）を含めるか（既定はオフ）
+  notifyPreview: boolean;
   sennin: boolean;
   coverTheme: CoverTheme;
   // senninai（AIチャット）を使うか。既定はオフ
@@ -171,6 +173,8 @@ export type UserProfile = {
   isFriend: boolean;
   friendship: FriendshipState;
   note: string | null;
+  // いまのノートのID（詳細を開くときに使う）
+  noteId: string | null;
 };
 
 // 友だち一覧の1人分（bio はステータスメッセージとして表示する）
@@ -182,6 +186,30 @@ export type Friend = {
   hasAvatar: boolean;
   avatarVersion: string | null;
   coverTheme: CoverTheme;
+  // 有効期限の内にあるノート（なければ null）
+  note?: { id: string; body: string; expiresAt: string } | null;
+};
+
+// ノートの詳細（ノートを開いたとき）
+export type NotePerson = {
+  id: string;
+  username: string;
+  displayName: string;
+  hasAvatar: boolean;
+  avatarVersion: string | null;
+};
+
+export type NoteDetail = {
+  id: string;
+  body: string;
+  expiresAt: string;
+  owner: NotePerson;
+  isMine: boolean;
+  likeCount: number;
+  likedByMe: boolean;
+  // いいねした人（ノートの本人にだけ届く。ほかの人には null）
+  likers: (NotePerson & { likedAt: string })[] | null;
+  comments: { id: string; body: string; createdAt: string; mine: boolean; canDelete: boolean; author: NotePerson }[];
 };
 
 // 1対1の相手とのフレンド関係（自分から見た状態）

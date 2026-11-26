@@ -20,6 +20,8 @@ export type FriendInfo = {
   // 画像の版（画像のパス）。変わったら画像を取り直すための目印
   avatarVersion: string | null;
   coverTheme: string;
+  // 有効期限の内にあるノート（友だち一覧で、アイコンの上に吹き出しとして出す）
+  note: { id: string; body: string; expiresAt: string } | null;
 };
 
 type UserRow = {
@@ -35,14 +37,15 @@ type UserRow = {
 // friend: 友だち / incoming: 相手から申請が来ている / outgoing: こちらから申請中 / none: 関係なし
 export type FriendshipState = "friend" | "incoming" | "outgoing" | "none";
 
-const toInfo = (u: UserRow): FriendInfo => ({
+const toInfo = (u: UserRow, note: FriendInfo["note"] = null): FriendInfo => ({
   id: u.id,
   username: u.username,
   displayName: u.display_name,
   bio: u.bio ?? "",
   hasAvatar: Boolean(u.avatar_path),
   avatarVersion: avatarVersionOf(u.avatar_path),
-  coverTheme: u.cover_theme ?? "green"
+  coverTheme: u.cover_theme ?? "green",
+  note
 });
 
 // 自分の友だちのID一覧（グループ作成・追加の判定や、検索結果の「追加済み」表示に使う）
@@ -91,7 +94,23 @@ async function befriend(a: string, b: string) {
   if (deleteError) throw deleteError;
 }
 
-export async function usersByIds(ids: string[]): Promise<FriendInfo[]> {
+// 有効期限の内にあるノートだけを、ユーザーごとに1件ずつ取る（1回の問い合わせにまとめる）
+async function activeNotesOf(ids: string[]): Promise<Map<string, { id: string; body: string; expiresAt: string }>> {
+  const notes = new Map<string, { id: string; body: string; expiresAt: string }>();
+  if (!ids.length) return notes;
+  const { data, error } = await sb
+    .from("sc_notes")
+    .select("id, user_id, body, expires_at")
+    .in("user_id", ids)
+    .gt("expires_at", new Date().toISOString());
+  if (error) throw error;
+  for (const row of (data ?? []) as { id: string; user_id: string; body: string; expires_at: string }[]) {
+    notes.set(row.user_id, { id: row.id, body: row.body, expiresAt: row.expires_at });
+  }
+  return notes;
+}
+
+export async function usersByIds(ids: string[], withNotes = false): Promise<FriendInfo[]> {
   if (!ids.length) return [];
   const { data, error } = await sb
     .from("sc_users")
@@ -99,13 +118,14 @@ export async function usersByIds(ids: string[]): Promise<FriendInfo[]> {
     .in("id", ids)
     .order("display_name", { ascending: true });
   if (error) throw error;
-  return (data ?? []).map((row) => toInfo(row as UserRow));
+  const notes = withNotes ? await activeNotesOf(ids) : new Map<string, { id: string; body: string; expiresAt: string }>();
+  return (data ?? []).map((row) => toInfo(row as UserRow, notes.get((row as UserRow).id) ?? null));
 }
 
 friends.get("/friends", async (_req, res) => {
   const me = currentUserId(res);
   const ids = [...(await friendIdsOf(me))];
-  res.json(await usersByIds(ids));
+  res.json(await usersByIds(ids, true));
 });
 
 // 届いている申請（incoming）と、こちらが送って返事待ちの申請（outgoing）

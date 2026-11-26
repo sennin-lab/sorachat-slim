@@ -2,14 +2,13 @@ import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { z } from "zod";
-import { banOfUser, SESSION_COOKIE, sha256 } from "./auth.js";
+import { banOfUser, SESSION_COOKIE, sessionUserId } from "./auth.js";
 import { config } from "./config.js";
 import { getMaintenanceSettings } from "./maintenance.js";
 import { addSocket, removeSocket, sendToUser, setViewing } from "./hub.js";
 import { findCall } from "./callRegistry.js";
 import { BlockedError, UUID, blockersOf, insertMessage, memberIds, membership, replyTargetOk, toMessage } from "./messages.js";
 import { senninaiAfterMessage, senninaiPrecheck } from "./senninai.js";
-import { sb } from "./supabase.js";
 import { isIpBanned, upgradeIp } from "./ipBans.js";
 import { gameAction, gameActionInput } from "./games.js";
 import { GameError } from "./gameLogic.js";
@@ -55,13 +54,7 @@ const lastTypingAt = new WeakMap<WebSocket, number>();
 async function userFromRequest(req: IncomingMessage): Promise<string | null> {
   const match = req.headers.cookie?.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`));
   if (!match) return null;
-  const { data, error } = await sb
-    .from("sc_sessions")
-    .select("user_id, expires_at")
-    .eq("token_hash", sha256(match[1]))
-    .maybeSingle();
-  if (error || !data || new Date(data.expires_at).getTime() < Date.now()) return null;
-  return data.user_id as string;
+  return sessionUserId(match[1]).catch(() => null);
 }
 
 function sameOrigin(req: IncomingMessage) {

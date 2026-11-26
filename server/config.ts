@@ -79,6 +79,11 @@ export const config = {
     // ログイン（仙人アカウントで続行）で要求する許可
     loginScope: senninScope,
   },
+  // senninai（AIチャット）とクイズの回答元。GROQ_API_KEY があれば Groq を使い、なければ従来の senninai API（SENNIN_AI_URL）を使う
+  groq: {
+    apiKey: (process.env.GROQ_API_KEY || "").trim(),
+    model: (process.env.GROQ_MODEL || "").trim() || "llama-3.3-70b-versatile"
+  },
   // senninai（AIチャット）の回答元（UserLocal の senninai API）。既定は作者の公開エンドポイント
   senninAi: {
     baseUrl: (process.env.SENNIN_AI_URL || "https://senninai.hiroki2013403.workers.dev").replace(/\/+$/, "")

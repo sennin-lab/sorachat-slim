@@ -151,8 +151,18 @@ const PROBES: Record<string, Probe> = {
     }
   },
   senninai: {
-    label: "senninai の接続先（UserLocal）",
-    run: () => httpCheck(`${config.senninAi.baseUrl}/`)
+    label: config.groq.apiKey ? "senninai の接続先（Groq）" : "senninai の接続先（UserLocal）",
+    // Groq の鍵があるときは、モデル一覧を取れるかで確かめる（回答は作らないので転送量・料金はほぼかからない）
+    run: () =>
+      config.groq.apiKey
+        ? timedCheck(async () => {
+            const res = await fetch("https://api.groq.com/openai/v1/models", {
+              headers: { authorization: `Bearer ${config.groq.apiKey}` },
+              signal: AbortSignal.timeout(8_000)
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          }, "Groq に接続できました")
+        : httpCheck(`${config.senninAi.baseUrl}/`)
   },
   "cfg:push": {
     label: "通知の鍵（VAPID）",

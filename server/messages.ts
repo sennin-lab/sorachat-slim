@@ -284,7 +284,7 @@ export async function replyTargetOk(conversationId: string, replyToId: string | 
   return Boolean(data);
 }
 
-async function notifyOffline(conversationId: string, senderId: string, members: string[], _preview: string, skip: Set<string>) {
+async function notifyOffline(conversationId: string, senderId: string, members: string[], preview: string, skip: Set<string>) {
   // 送った本人以外の全員へ（通知オフ・ブロックしている人は除く）。画面を開いている端末だけは、その端末への通知を省く
   const others = recipientsToNotify(members, senderId, skip);
   if (!others.length) return;
@@ -296,11 +296,12 @@ async function notifyOffline(conversationId: string, senderId: string, members: 
     ? `${sender?.display_name ?? "メンバー"}（${conv.title ?? "グループ"}）`
     : sender?.display_name ?? "新着メッセージ";
   for (const uid of others) {
-    // 本文は通知（Apple/Google のプッシュサービス経由）に載せない
+    // 本文は、受け取る人が「通知に本文を含める」をオンにしたときだけ載せる（既定はオフ）
     void notifyRecipient({
       recipientId: uid,
       senderName,
-      preview: "新しいメッセージがあります",
+      preview,
+      fallbackPreview: "新しいメッセージがあります",
       conversationId,
       skipEndpoints: activeEndpoints(uid)
     });

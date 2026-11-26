@@ -2,9 +2,9 @@ import crypto from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { config } from "./config.js";
-import { banOf, cookieBase, type BanInfo } from "./auth.js";
+import { banOf, cookieBase, forgetBan, forgetSessionsOf, type BanInfo } from "./auth.js";
 import { disconnectUser } from "./hub.js";
-import { isAllowedImage, readImage, removeImage, saveImage, upload } from "./media.js";
+import { forgetAvatarPath, isAllowedImage, readImage, removeImage, saveImage, upload } from "./media.js";
 import { sb } from "./supabase.js";
 import { decryptText, encryptText } from "./crypto.js";
 import { broadcastList, broadcastToConversation, UUID } from "./messages.js";
@@ -255,6 +255,7 @@ admin.post("/admin/users/:id/ban", async (req, res) => {
     res.status(404).json({ error: "ユーザーが見つかりません。" });
     return;
   }
+  forgetBan(id);
   // 開いている接続は閉じる（利用者の画面が利用停止の表示に切り替わる）
   disconnectUser(id);
   res.json({ ok: true, ban: banOf({ banned_at: bannedAt, banned_until: bannedUntil, ban_reason: banReason }) });
@@ -265,6 +266,7 @@ admin.post("/admin/users/:id/unban", async (req, res) => {
   if (!id) return;
   const { error } = await sb.from("sc_users").update({ banned_at: null, banned_until: null, ban_reason: null }).eq("id", id);
   if (error) throw error;
+  forgetBan(id);
   res.json({ ok: true });
 });
 
@@ -361,6 +363,7 @@ admin.post("/admin/users/:id/avatar", upload.single("file"), async (req, res) =>
   }
   const path = await saveImage(req.file!, `avatars/${id}`);
   const { error } = await sb.from("sc_users").update({ avatar_path: path }).eq("id", id);
+  forgetAvatarPath(`user:${id}`);
   if (error) throw error;
   await removeImage(user.avatar_path ?? null);
   res.json({ ok: true, hasAvatar: true });
@@ -376,6 +379,7 @@ admin.delete("/admin/users/:id/avatar", async (req, res) => {
     return;
   }
   const { error } = await sb.from("sc_users").update({ avatar_path: null }).eq("id", id);
+  forgetAvatarPath(`user:${id}`);
   if (error) throw error;
   await removeImage(user.avatar_path ?? null);
   res.json({ ok: true, hasAvatar: false });
@@ -431,6 +435,7 @@ admin.post("/admin/users/:id/password", async (req, res) => {
     return;
   }
   // 今のログインは全て切る（新しいパスワードで入り直してもらう）
+  forgetSessionsOf(id);
   const { error: sessionError } = await sb.from("sc_sessions").delete().eq("user_id", id);
   if (sessionError) throw sessionError;
   disconnectUser(id);

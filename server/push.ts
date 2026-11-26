@@ -80,6 +80,8 @@ export async function notifyRecipient(args: {
   recipientId: string;
   senderName: string;
   preview: string;
+  // 本文を載せない設定の人に送る文（指定がなければ preview をそのまま使う）
+  fallbackPreview?: string;
   conversationId: string;
   tag?: string;
   // この端末では画面が開いているので送らない（端末ごとの通知先）
@@ -87,15 +89,16 @@ export async function notifyRecipient(args: {
 }) {
   if (!pushEnabled) return;
   try {
-    const { data: user } = await sb.from("sc_users").select("notify_dm").eq("id", args.recipientId).maybeSingle();
+    const { data: user } = await sb.from("sc_users").select("notify_dm, notify_preview").eq("id", args.recipientId).maybeSingle();
     if (!user?.notify_dm) return;
+    const text = user.notify_preview || !args.fallbackPreview ? args.preview : args.fallbackPreview;
     const { data: subs } = await sb
       .from("sc_push_subscriptions")
       .select("endpoint, p256dh, auth")
       .eq("user_id", args.recipientId);
     const payload = JSON.stringify({
       title: args.senderName,
-      body: args.preview,
+      body: text,
       url: `/?dm=${args.conversationId}`,
       tag: args.tag ?? `dm-${args.conversationId}`
     });

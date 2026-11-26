@@ -3,10 +3,14 @@ import { api, delete_, post } from "./api";
 import { cachedFriends, saveFriends, syncAvatars } from "./avatarCache";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
+import { NoteSheet } from "./NoteSheet";
 import { UserRow } from "./UserRow";
 import type { Friend, Me } from "./types";
 
 type Requests = { incoming: Friend[]; outgoing: Friend[] };
+
+// 期限の内にあるノート（切れていれば null）
+const liveNote = (f: Friend) => (f.note && Date.parse(f.note.expiresAt) > Date.now() ? f.note : null);
 
 // 「友だち」タブ：フレンドリクエスト（届いた分・送信中の分）、自分のプロフィール、友だち一覧
 export function FriendsTab({
@@ -32,6 +36,8 @@ export function FriendsTab({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [reload, setReload] = useState(0);
+  // 詳細を開いているノート
+  const [openNoteId, setOpenNoteId] = useState<string | null>(null);
 
   useEffect(() => {
     api<Friend[]>("/api/friends")
@@ -79,6 +85,15 @@ export function FriendsTab({
       setError("通信に失敗しました。もう一度お試しください。");
     } finally {
       setBusy("");
+    }
+  };
+
+  // ノートをダブルタップしたとき、そのままいいねする（詳細を開かずに反応できる）
+  const likeNote = async (noteId: string) => {
+    try {
+      await api(`/api/notes/${noteId}/like`, post());
+    } catch {
+      setError("いいねできませんでした。もう一度お試しください。");
     }
   };
 
@@ -198,11 +213,22 @@ export function FriendsTab({
               hasAvatar={f.hasAvatar}
               name={f.displayName}
               sub={f.bio || `@${f.username}`}
+              note={liveNote(f)}
+              onNoteOpen={() => {
+                const n = liveNote(f);
+                if (n) setOpenNoteId(n.id);
+              }}
+              onNoteLike={() => {
+                const n = liveNote(f);
+                if (n) void likeNote(n.id);
+              }}
               onClick={() => onOpenUser(f.id)}
             />
           ))}
         </ul>
       )}
+
+      {openNoteId && <NoteSheet noteId={openNoteId} onClose={() => setOpenNoteId(null)} />}
 
       {!items && !error && (
         <ul className="skeleton-list" aria-label="読み込み中">

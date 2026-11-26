@@ -25,6 +25,7 @@ export function SettingsSheet({
   onLogout: () => void;
 }) {
   const [notify, setNotify] = useState(me.notifyDm);
+  const [preview, setPreview] = useState(me.notifyPreview);
   const [ai, setAi] = useState(me.aiEnabled);
   const [showUnsent, setShowUnsentState] = useState(getShowUnsent);
   const [liquidIcon, setLiquidIconState] = useState(getLiquidIcon);
@@ -82,6 +83,21 @@ export function SettingsSheet({
       }
     } catch (err) {
       setNotify(!on);
+      setStatus(err instanceof ApiError ? err.message : "通知の設定を変更できませんでした。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 通知に本文を含めるか。含めると、メッセージの一部が通知サービス（Apple・Google）を経由して届く
+  const togglePreview = async (on: boolean) => {
+    setBusy(true);
+    setStatus("");
+    setPreview(on);
+    try {
+      onChange(await api<Me>("/api/me", post({ notifyPreview: on })));
+    } catch (err) {
+      setPreview(!on);
       setStatus(err instanceof ApiError ? err.message : "通知の設定を変更できませんでした。");
     } finally {
       setBusy(false);
@@ -235,6 +251,27 @@ export function SettingsSheet({
           />
         </label>
       </div>
+
+      <div className="page-card">
+        <label className="page-row">
+          <span className="row-label">
+            <span className="option-icon">
+              <Icon name="bell" size={18} />
+            </span>
+            通知に本文を含める
+          </span>
+          <input
+            type="checkbox"
+            className="switch"
+            checked={preview && notify}
+            disabled={busy || !notify}
+            onChange={(e) => void togglePreview(e.target.checked)}
+          />
+        </label>
+      </div>
+      <p className="notice center small">
+        オンにすると、通知にメッセージの一部が表示されます。内容は通知サービス（Apple・Google）を経由して端末に届きます。オフのときは「新しいメッセージがあります」と表示します。
+      </p>
 
       {notify && (
         <div className="page-card">

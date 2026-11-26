@@ -30,13 +30,16 @@ export function GroupSheet({
   meId,
   onClose,
   onLeft,
-  onChanged
+  onChanged,
+  onOpenUser
 }: {
   conversationId: string;
   meId: string;
   onClose: () => void;
   onLeft: () => void;
   onChanged: () => void;
+  // メンバーを押したときに、その人のプロフィールを開く（自分以外）
+  onOpenUser?: (id: string) => void;
 }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -271,6 +274,7 @@ export function GroupSheet({
             hasAvatar={m.hasAvatar}
             name={m.displayName}
             sub={`@${m.username}`}
+            onClick={onOpenUser && m.id !== meId ? () => onOpenUser(m.id) : undefined}
             right={
               <span className="member-end">
                 {m.id === meId && <span className="muted small">自分</span>}

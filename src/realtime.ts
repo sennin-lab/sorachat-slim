@@ -33,7 +33,7 @@ export function getClient(): Promise<SupabaseClient> {
   return clientPromise;
 }
 
-// 会話一覧・メンバー・ノートなどの変更通知（Supabase Realtime）
+// 会話一覧・メンバーなどの変更通知（Supabase Realtime）。ノートは全員ぶんを購読すると転送量が増えるため、友だち画面を開いたときに取り直す
 export type DataEvent = { kind: "change" };
 
 const listeners = new Set<(event: DataEvent) => void>();
@@ -54,7 +54,6 @@ export async function startDataSync(userId: string) {
     .channel(`data:${userId}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "sc_members" }, () => emit({ kind: "change" }))
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "sc_conversations" }, () => emit({ kind: "change" }))
-    .on("postgres_changes", { event: "*", schema: "public", table: "sc_notes" }, () => emit({ kind: "change" }))
     .subscribe();
 }
 

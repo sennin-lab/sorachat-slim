@@ -2588,19 +2588,203 @@ button[aria-busy="true"] { animation: sc-soft-pulse 1.4s ease-in-out infinite; }
 .stamp-sheet .stamp-empty { text-align: center; color: var(--muted); padding: 24px 0; }
 
 /* ダミーのデモサイト（/admin の入口）。管理者ログインへ進むボタンは目立たせない */
+
+/* 友だち一覧のノート（アイコンの上の吹き出し） */
+.row-avatar { position: relative; flex: none; display: inline-flex; margin-top: 18px; }
+.row-avatar .note-bubble {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 150px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: var(--shadow);
+  animation: fade-in 0.4s ease both;
+}
+.row-avatar .note-bubble::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 8px;
+  height: 8px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  rotate: 45deg;
+  margin-top: -5px;
+}
+
+/* 行の本体は押せて、右側のボタンも押せる行（グループのメンバーなど） */
+.user-row.with-right { cursor: default; }
+.user-row.with-right:hover:not(:disabled) { background: transparent; }
+.user-row .user-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.user-row .user-main:hover { opacity: 0.8; }
+
+/* メッセージのスワイプ返信（右から左へ引く） */
+.swipe-reply { position: relative; overflow: hidden; }
+.swipe-body { position: relative; z-index: 1; will-change: transform; }
+.swipe-hint {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  z-index: 0;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--accent-ink);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+/* プロフィール設定ページ */
+.profile-edit-head { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 16px 4px; }
+.profile-edit-head .profile-avatar { margin-top: 0; padding: 0; }
+.profile-edit-head .profile-avatar .avatar { animation: fade-in 0.4s ease both; }
+.cover-choice { overflow: hidden; }
+.cover-choice .cover-picker { border-top: 0; }
+.profile-edit-page .form-card { margin-bottom: 0; }
+.profile-edit-foot { display: flex; justify-content: flex-end; padding: 16px; }
+button.profile-avatar { padding: 0; font: inherit; color: inherit; }
+
+/* ノートの吹き出し（押すと詳細、2回押すといいね） */
+.row-avatar .note-bubble { cursor: pointer; }
+.row-avatar .note-bubble:active { transform: translateX(-50%) scale(0.96); }
+.note-heart {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  color: #ff4d6d;
+  font-size: 26px;
+  line-height: 1;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  animation: note-heart-pop 0.8s ease-out both;
+}
+.note-heart.big { font-size: 96px; }
+@keyframes note-heart-pop {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+  25% { opacity: 1; transform: translate(-50%, -50%) scale(1.15); }
+  60% { opacity: 1; transform: translate(-50%, -60%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -90%) scale(1); }
+}
+
+/* ノートの詳細ページ */
+.note-page { gap: 0; }
+.note-owner { display: flex; align-items: center; gap: 12px; padding: 16px; }
+.note-owner .row-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.note-owner .row-text strong { font-size: 16px; }
+.note-owner .row-text small { color: var(--muted); font-size: 13px; }
+.note-card {
+  position: relative;
+  margin: 0 16px;
+  padding: 28px 22px;
+  border-radius: 20px;
+  background: var(--raised);
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+}
+.note-card-body { margin: 0; font-size: 20px; line-height: 1.5; font-weight: 600; text-align: center; word-break: break-word; }
+.note-hint { margin: 8px 0 0; }
+.note-actions { display: flex; justify-content: center; padding: 12px 16px 4px; }
+.note-count { font-weight: 600; }
+.note-comments { list-style: none; margin: 0; padding: 0 0 8px; background: var(--panel); }
+.note-comment { display: flex; gap: 10px; padding: 10px 16px; align-items: flex-start; }
+.note-comment-body { flex: 1; min-width: 0; }
+.note-comment-head { display: flex; gap: 8px; align-items: baseline; }
+.note-comment-head strong { font-size: 14px; }
+.note-comment-head small { color: var(--muted); font-size: 12px; }
+.note-comment-body p { margin: 2px 0 0; font-size: 15px; line-height: 1.4; word-break: break-word; }
+.note-comment-del { flex: none; font-size: 12px; }
+.note-compose {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+.note-compose input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft, var(--raised));
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+.note-view { margin: 10px auto 0; display: flex; }
+
 .demo-site { min-height: 100%; display: flex; flex-direction: column; background: var(--bg); color: var(--text, #1d2733); }
-.demo-site-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); }
-.demo-site-brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+.demo-site a { color: inherit; text-decoration: none; }
+.demo-site-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 16px; padding: 14px 20px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.demo-site-brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; }
 .demo-site-mark { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent, #3b8ee6); color: #fff; font-size: 14px; }
-.demo-site-tag { font-size: 12px; color: var(--muted, #6b7a8c); }
-.demo-site-main { flex: 1; padding: 40px 20px; max-width: 880px; width: 100%; margin: 0 auto; }
-.demo-site-hero { text-align: center; padding: 24px 0 36px; }
-.demo-site-hero h1 { margin: 0 0 12px; font-size: 26px; }
-.demo-site-hero p { margin: 0 0 22px; color: var(--muted, #6b7a8c); }
-.demo-site-cta { padding: 12px 28px; border: 0; border-radius: 999px; background: var(--accent, #3b8ee6); color: #fff; font-weight: 700; opacity: 0.6; }
-.demo-site-cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
-.demo-site-cards article { padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--bg-soft); }
-.demo-site-cards h2 { margin: 0 0 6px; font-size: 16px; }
-.demo-site-cards p { margin: 0; font-size: 14px; color: var(--muted, #6b7a8c); }
-.demo-site-foot { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted, #6b7a8c); }
-.demo-site-admin { border: 0; background: none; color: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; padding: 6px; }
+.demo-site-nav { display: flex; gap: 16px; margin-left: auto; font-size: 14px; color: var(--muted, #6b7a8c); }
+.demo-site-nav a:hover { color: var(--text, #1d2733); }
+.demo-site-main { flex: 1; width: 100%; max-width: 960px; margin: 0 auto; padding: 16px 20px 40px; }
+.demo-site-hero { text-align: center; padding: 48px 0 40px; }
+.demo-site-hero h1 { margin: 0 0 14px; font-size: 30px; line-height: 1.35; }
+.demo-site-hero p { margin: 0 auto 26px; max-width: 560px; color: var(--muted, #6b7a8c); line-height: 1.7; }
+.demo-site-actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; align-items: center; }
+.demo-site-cta { display: inline-block; padding: 12px 28px; border-radius: 999px; background: var(--accent, #3b8ee6); color: #fff !important; font-weight: 700; }
+.demo-site-cta.small { padding: 8px 16px; font-size: 14px; }
+.demo-site-sub { padding: 12px 20px; border-radius: 999px; border: 1px solid var(--line); font-weight: 600; }
+.demo-site-section { padding: 36px 0 8px; }
+.demo-site-section h2 { margin: 0 0 18px; font-size: 22px; }
+.demo-site-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.demo-site-card { padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--bg-soft); }
+.demo-site-card h3 { margin: 0 0 6px; font-size: 16px; }
+.demo-site-card p { margin: 0; font-size: 14px; line-height: 1.6; color: var(--muted, #6b7a8c); }
+.demo-site-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: step; }
+.demo-site-steps li { counter-increment: step; position: relative; padding: 16px 18px 16px 62px; border: 1px solid var(--line); border-radius: 14px; background: var(--bg-soft); }
+.demo-site-steps li::before { content: counter(step); position: absolute; left: 18px; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--accent, #3b8ee6); color: #fff; font-weight: 700; }
+.demo-site-steps h3 { margin: 0 0 4px; font-size: 16px; }
+.demo-site-steps p { margin: 0; font-size: 14px; color: var(--muted, #6b7a8c); line-height: 1.6; }
+.demo-site-faq { display: grid; gap: 10px; }
+.demo-site-faq details { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: var(--bg-soft); }
+.demo-site-faq summary { cursor: pointer; font-weight: 600; }
+.demo-site-faq p { margin: 10px 0 0; font-size: 14px; line-height: 1.7; color: var(--muted, #6b7a8c); }
+.demo-site-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted, #6b7a8c); flex-wrap: wrap; }
+.demo-site-credit { cursor: default; user-select: none; }
+.demo-site-made { font-style: italic; cursor: default; user-select: none; }
+@media (max-width: 640px) {
+  .demo-site-nav { display: none; }
+  .demo-site-hero { padding: 28px 0 24px; }
+  .demo-site-hero h1 { font-size: 24px; }
+}

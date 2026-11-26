@@ -37,6 +37,7 @@ import { GameCard } from "./GameCard";
 import { GameSheet } from "./GameSheet";
 import { RichText } from "./LinkText";
 import { CodeMessage } from "./CodeMessage";
+import { SwipeReply } from "./SwipeReply";
 import { ThreadSkeleton } from "./Loading";
 import type { Conversation, FriendshipState, GameKind, Member, Message } from "./types";
 
@@ -962,6 +963,7 @@ export function ChatView({
                   <span>{info.divider}</span>
                 </div>
               )}
+              <SwipeReply enabled={!m.status && !m.deleted} onReply={() => startReply(m)}>
               <div className={rowClass} id={`msg-${m.id}`}>
                 {!mine && (
                   <div className="msg-avatar">
@@ -1074,6 +1076,7 @@ export function ChatView({
                   )}
                 </div>
               </div>
+              </SwipeReply>
             </Fragment>
           );
         })}
@@ -1197,6 +1200,10 @@ export function ChatView({
           onClose={() => setShowInfo(false)}
           onLeft={leave}
           onChanged={onActivity}
+          onOpenUser={(id) => {
+            setShowInfo(false);
+            navigate(`/profile/${id}`);
+          }}
         />
       )}
       {showRoom && conversation && !isGroup && (

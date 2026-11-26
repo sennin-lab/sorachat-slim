@@ -3,7 +3,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { z } from "zod";
 import { config, missingSenninSettings } from "./config.js";
 import { cookieBase, currentUserId, banOfUser, endSession, randomToken, requireAuth, sessionUserId, SESSION_COOKIE, signRealtimeToken, startSession } from "./auth.js";
-import { isAllowedImage, readImage, removeImage, saveImage, upload } from "./media.js";
+import { cachedAvatarPath, forgetAvatarPath, isAllowedImage, readImage, rememberAvatarPath, removeImage, saveImage, upload } from "./media.js";
 import { friendIdsOf, friendshipOf } from "./friends.js";
 import { avatarVersionOf } from "./avatarVersion.js";
 import { disableAi, enableAi } from "./senninai.js";
@@ -67,6 +67,7 @@ const updateMeSchema = z.object({
   contact: z.string().max(120).optional(),
   profileUrl: z.string().max(200).refine((value) => !value || /^https?:\/\//i.test(value), "URLはhttps:// または http:// から入力してください。").optional(),
   notifyDm: z.boolean().optional(),
+  notifyPreview: z.boolean().optional(),
   coverTheme: z.enum(COVER_THEMES).optional(),
   aiEnabled: z.boolean().optional()
 });
@@ -80,6 +81,8 @@ async function loadMe(userId: string) {
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
+  // 通知の本文の設定は、ログインに必要な列とは別に読む（この列がなくてもログインできるように）
+  const { data: pref } = await sb.from("sc_users").select("notify_preview").eq("id", userId).maybeSingle();
   return {
     id: data.id as string,
     username: data.username as string,
@@ -90,6 +93,7 @@ async function loadMe(userId: string) {
     hasAvatar: Boolean(data.avatar_path),
     avatarVersion: avatarVersionOf(data.avatar_path as string | null),
     notifyDm: data.notify_dm as boolean,
+    notifyPreview: Boolean((pref as { notify_preview?: boolean } | null)?.notify_preview),
     sennin: Boolean(data.sennin_id),
     coverTheme: (data.cover_theme ?? "green") as string,
     aiEnabled: Boolean(data.ai_enabled)
@@ -322,6 +326,7 @@ accounts.post("/me", requireAuth, async (req, res) => {
   if (body.contact !== undefined) update.contact = body.contact;
   if (body.profileUrl !== undefined) update.profile_url = body.profileUrl;
   if (body.notifyDm !== undefined) update.notify_dm = body.notifyDm;
+  if (body.notifyPreview !== undefined) update.notify_preview = body.notifyPreview;
   if (body.coverTheme !== undefined) update.cover_theme = body.coverTheme;
   if (body.aiEnabled !== undefined) update.ai_enabled = body.aiEnabled;
   const userId = currentUserId(res);
@@ -354,6 +359,7 @@ accounts.post("/me/avatar", requireAuth, upload.single("file"), async (req, res)
     await removeImage(path);
     throw error;
   }
+  forgetAvatarPath(`user:${userId}`);
   await removeImage(data?.avatar_path ?? null);
   res.json(await loadMe(userId));
 });
@@ -417,16 +423,23 @@ accounts.get("/users/:id/avatar", requireAuth, async (req, res) => {
     res.status(404).end();
     return;
   }
-  const { data } = await sb.from("sc_users").select("avatar_path").eq("id", id).maybeSingle();
-  if (!data?.avatar_path) {
+  const key = `user:${id}`;
+  let avatarPath = cachedAvatarPath(key)?.path;
+  if (avatarPath === undefined) {
+    const { data, error } = await sb.from("sc_users").select("avatar_path").eq("id", id).maybeSingle();
+    if (error) throw error;
+    avatarPath = (data?.avatar_path as string | null) ?? null;
+    rememberAvatarPath(key, avatarPath);
+  }
+  if (!avatarPath) {
     res.setHeader("cache-control", "no-store");
     res.status(404).end();
     return;
   }
   // 版（?v=）が今の画像と同じなら、URL が変わらない限りブラウザに保存させる（同じ版はもう取りに来ない）
-  const versioned = typeof req.query.v === "string" && req.query.v === avatarVersionOf(data.avatar_path);
+  const versioned = typeof req.query.v === "string" && req.query.v === avatarVersionOf(avatarPath);
   const cacheControl = versioned ? "private, max-age=31536000, immutable" : "private, no-cache";
-  const image = await readImage(data.avatar_path);
+  const image = await readImage(avatarPath);
   if (!image) {
     res.setHeader("cache-control", "no-store");
     res.status(404).end();
@@ -443,12 +456,12 @@ const NOTE_MS = 24 * 60 * 60 * 1000;
 accounts.get("/me/note", requireAuth, async (_req, res) => {
   const { data, error } = await sb
     .from("sc_notes")
-    .select("body, expires_at")
+    .select("id, body, expires_at")
     .eq("user_id", currentUserId(res))
     .maybeSingle();
   if (error) throw error;
   const active = data && new Date(data.expires_at).getTime() > Date.now();
-  res.json(active ? { body: data.body, expiresAt: data.expires_at } : null);
+  res.json(active ? { id: data.id, body: data.body, expiresAt: data.expires_at } : null);
 });
 
 accounts.put("/me/note", requireAuth, async (req, res) => {
@@ -458,12 +471,14 @@ accounts.put("/me/note", requireAuth, async (req, res) => {
     return;
   }
   const expiresAt = new Date(Date.now() + NOTE_MS).toISOString();
-  const { error } = await sb.from("sc_notes").upsert(
-    { user_id: currentUserId(res), body: parsed.data.body, expires_at: expiresAt },
-    { onConflict: "user_id" }
-  );
+  const userId = currentUserId(res);
+  // ノートは投稿ごとに作り直す（前のノートのいいね・コメントは一緒に消える）
+  const { error: deleteError } = await sb.from("sc_notes").delete().eq("user_id", userId);
+  if (deleteError) throw deleteError;
+  const id = crypto.randomUUID();
+  const { error } = await sb.from("sc_notes").insert({ id, user_id: userId, body: parsed.data.body, expires_at: expiresAt });
   if (error) throw error;
-  res.json({ body: parsed.data.body, expiresAt });
+  res.json({ id, body: parsed.data.body, expiresAt });
 });
 
 accounts.delete("/me/note", requireAuth, async (_req, res) => {
@@ -492,10 +507,11 @@ accounts.get("/users/:id/profile", requireAuth, async (req, res) => {
   const isFriend = friendship === "friend";
   const { data: note } = await sb
     .from("sc_notes")
-    .select("body, expires_at")
+    .select("id, body, expires_at")
     .eq("user_id", id)
     .maybeSingle();
   const activeNote = note && new Date(note.expires_at).getTime() > Date.now() ? note.body : null;
+  const activeNoteId = activeNote ? (note as { id: string }).id : null;
   res.json({
     id: data.id,
     username: data.username,
@@ -507,7 +523,8 @@ accounts.get("/users/:id/profile", requireAuth, async (req, res) => {
     coverTheme: data.cover_theme ?? "green",
     isFriend,
     friendship,
-    note: activeNote
+    note: activeNote,
+    noteId: activeNoteId
   });
 });
 

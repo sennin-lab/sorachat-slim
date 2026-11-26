@@ -4,6 +4,7 @@ import { Avatar } from "./Avatar";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Cover } from "./Cover";
 import { Icon } from "./Icon";
+import { NoteSheet } from "./NoteSheet";
 import type { FriendshipState, UserProfile } from "./types";
 
 const messageOf = (err: unknown) => (err instanceof ApiError ? err.message : "通信に失敗しました。");
@@ -31,6 +32,8 @@ export function UserProfileSheet({
   // ブロック中かどうか（null は確認中）
   const [blocked, setBlocked] = useState<boolean | null>(null);
   const [askBlock, setAskBlock] = useState(false);
+  // 開いているノート（ノートを押すと、詳細とコメントを開く）
+  const [openNote, setOpenNote] = useState(false);
 
   useEffect(() => {
     api<UserProfile>(`/api/users/${userId}/profile`).then(setProfile).catch(() => setFailed(true));
@@ -141,11 +144,19 @@ export function UserProfileSheet({
             <p className={`profile-status ${profile.bio ? "" : "muted"}`}>{profile.bio || "ステータスメッセージはありません"}</p>
           </div>
 
-          {profile.note && (
-            <div className="note">
+          {profile.note && profile.noteId && profile.isFriend ? (
+            <button className="note" onClick={() => setOpenNote(true)}>
               <span className="note-tag">ノート</span>
               <span>{profile.note}</span>
-            </div>
+              <Icon name="chevron" size={16} className="chev" />
+            </button>
+          ) : (
+            profile.note && (
+              <div className="note">
+                <span className="note-tag">ノート</span>
+                <span>{profile.note}</span>
+              </div>
+            )
           )}
 
           <div className="profile-actions wide-actions">
@@ -245,6 +256,7 @@ export function UserProfileSheet({
           )}
         </>
       )}
+      {openNote && profile?.noteId && <NoteSheet noteId={profile.noteId} onClose={() => setOpenNote(false)} />}
     </div>
   );
 }
