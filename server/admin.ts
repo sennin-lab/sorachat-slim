@@ -16,6 +16,7 @@ import { addIpBan, manualIp, removeIpBan } from "./ipBans.js";
 export const admin = Router();
 
 export const ADMIN_COOKIE = "sc_admin";
+export const ADMIN_FULL_COOKIE = "sc_admin_full";
 const ADMIN_MS = 12 * 60 * 60 * 1000;
 
 // ---- 管理者の証明書（署名つきのCookie。サーバー側に保存しない）----
@@ -37,8 +38,39 @@ function validToken(token: unknown) {
   return given.length === expected.length && crypto.timingSafeEqual(given, expected);
 }
 
+// ---- フルアクセス（メッセージ・友だち関係の閲覧）用の証明書 ----
+// 通常の管理者パスワードとは別の暗号鍵（ADMIN_FULL_KEY）。通常管理者には存在を知らせない
+const fullSignKey = () => `${config.supabaseJwtSecret}:full:${config.adminFullKey}`;
+const fullSign = (expiresAt: number) => crypto.createHmac("sha256", fullSignKey()).update(`admin-full:${expiresAt}`).digest("base64url");
+
+function makeFullToken() {
+  const expiresAt = Date.now() + ADMIN_MS;
+  return `${expiresAt}.${fullSign(expiresAt)}`;
+}
+
+function validFullToken(token: unknown) {
+  if (typeof token !== "string" || !config.adminFullKey) return false;
+  const [expRaw, signature] = token.split(".");
+  const expiresAt = Number(expRaw);
+  if (!signature || !Number.isFinite(expiresAt) || expiresAt < Date.now()) return false;
+  const expected = Buffer.from(fullSign(expiresAt));
+  const given = Buffer.from(signature);
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+
 const sha = (value: string) => crypto.createHash("sha256").update(value).digest();
-const passwordMatches = (input: string) => crypto.timingSafeEqual(sha(input), sha(config.adminPassword));
+const passwordMatches = (input: string) => {
+  if (!config.adminPassword) return false;
+  const a = sha(input);
+  const b = sha(config.adminPassword);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+const fullKeyMatches = (input: string) => {
+  if (!config.adminFullKey) return false;
+  const a = sha(input);
+  const b = sha(config.adminFullKey);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
 
 // 管理者ログインの試行回数制限（15分に10回まで）
 const attempts = new Map<string, { count: number; resetAt: number }>();
@@ -67,6 +99,19 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+/** フルアクセス必須。通常管理者でもメッセージ・友だち関係は見られない */
+export function requireFullAccess(req: Request, res: Response, next: NextFunction) {
+  if (!validFullToken(req.cookies?.[ADMIN_FULL_COOKIE])) {
+    res.status(401).json({ error: "暗号鍵を入力してください。" });
+    return;
+  }
+  next();
+}
+
+function hasFullAccess(req: Request) {
+  return validFullToken(req.cookies?.[ADMIN_FULL_COOKIE]);
+}
+
 const idParam = (req: Request, res: Response): string | null => {
   const id = String(req.params.id);
   if (!UUID.test(id)) {
@@ -93,6 +138,34 @@ admin.post("/admin/login", loginLimit, (req, res) => {
 
 admin.post("/admin/logout", (_req, res) => {
   res.clearCookie(ADMIN_COOKIE, cookieBase);
+  res.json({ ok: true });
+});
+
+// ---- フルアクセスログイン（暗号鍵）。通常の管理者画面からはリンクしない ----
+admin.post("/admin/full/login", loginLimit, (req, res) => {
+  if (!config.adminFullKey) {
+    res.status(503).json({ error: "この機能は利用できません。" });
+    return;
+  }
+  const parsed = z.object({ key: z.string().min(1).max(500) }).safeParse(req.body);
+  if (!parsed.success || !fullKeyMatches(parsed.data.key)) {
+    res.status(401).json({ error: "暗号鍵が違います。" });
+    return;
+  }
+  res.cookie(ADMIN_FULL_COOKIE, makeFullToken(), { ...cookieBase, sameSite: "strict", maxAge: ADMIN_MS });
+  res.json({ ok: true });
+});
+
+admin.post("/admin/full/logout", (_req, res) => {
+  res.clearCookie(ADMIN_FULL_COOKIE, cookieBase);
+  res.json({ ok: true });
+});
+
+admin.get("/admin/full/session", (req, res) => {
+  if (!validFullToken(req.cookies?.[ADMIN_FULL_COOKIE])) {
+    res.status(401).json({ error: "暗号鍵を入力してください。" });
+    return;
+  }
   res.json({ ok: true });
 });
 
@@ -173,18 +246,23 @@ admin.get("/admin/users/:id", async (req, res) => {
     res.status(404).json({ error: "ユーザーが見つかりません。" });
     return;
   }
-  const { data: friendRows, error: friendError } = await sb.from("sc_friends").select("friend_id").eq("user_id", id);
-  if (friendError) throw friendError;
-  const friendIds = (friendRows ?? []).map((row: { friend_id: string }) => row.friend_id);
+  // 友だち・参加チャットはフルアクセス時のみ返す（通常管理者には見せない）
+  const full = hasFullAccess(req);
   let friends: UserRow[] = [];
-  if (friendIds.length) {
-    const { data, error: usersError } = await sb.from("sc_users").select(USER_COLUMNS).in("id", friendIds);
-    if (usersError) throw usersError;
-    friends = (data ?? []) as UserRow[];
+  let conversations: Awaited<ReturnType<typeof loadSummaries>> = [];
+  if (full) {
+    const { data: friendRows, error: friendError } = await sb.from("sc_friends").select("friend_id").eq("user_id", id);
+    if (friendError) throw friendError;
+    const friendIds = (friendRows ?? []).map((row: { friend_id: string }) => row.friend_id);
+    if (friendIds.length) {
+      const { data, error: usersError } = await sb.from("sc_users").select(USER_COLUMNS).in("id", friendIds);
+      if (usersError) throw usersError;
+      friends = (data ?? []) as UserRow[];
+    }
+    const { data: memberRows, error: memberError } = await sb.from("sc_members").select("conversation_id").eq("user_id", id);
+    if (memberError) throw memberError;
+    conversations = await loadSummaries((memberRows ?? []).map((row: { conversation_id: string }) => row.conversation_id));
   }
-  const { data: memberRows, error: memberError } = await sb.from("sc_members").select("conversation_id").eq("user_id", id);
-  if (memberError) throw memberError;
-  const conversations = await loadSummaries((memberRows ?? []).map((row: { conversation_id: string }) => row.conversation_id));
   res.json({
     ...userSummary(user as UserRow),
     bio: user.bio,
@@ -194,8 +272,9 @@ admin.get("/admin/users/:id", async (req, res) => {
     // IP（取得できていないときは null。管理者が手入力で BAN することもできる）
     signupIp: (user.signup_ip as string | null) ?? null,
     lastIp: (user.last_ip as string | null) ?? null,
-    friends: friends.map(userSummary),
-    conversations
+    // フルアクセスでないときは空配列のみ（フィールド自体は残すが中身は出さない）
+    friends: full ? friends.map(userSummary) : [],
+    conversations: full ? conversations : []
   });
 });
 
@@ -442,7 +521,7 @@ admin.post("/admin/users/:id/password", async (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- メッセージの削除（取り消しの表示も残さず、トークから消す。相手の画面からも消える）----
+// ---- メッセージの削除（フルアクセス必須。取り消し表示も残さずトークから消す）----
 const PREVIEW_LABEL: Record<string, string> = { contact: "連絡先", poll: "投票", game: "ミニゲーム" };
 
 async function refreshLastPreview(conversationId: string, deletedAt: string) {
@@ -465,7 +544,7 @@ async function refreshLastPreview(conversationId: string, deletedAt: string) {
     .eq("last_message_at", deletedAt);
 }
 
-admin.delete("/admin/messages/:id", async (req, res) => {
+admin.delete("/admin/messages/:id", requireFullAccess, async (req, res) => {
   const id = idParam(req, res);
   if (!id) return;
   const { data: msg, error: readError } = await sb
@@ -508,7 +587,7 @@ admin.post("/admin/announcements", async (req, res) => {
   res.json({ ok: true, queued: ids.length });
 });
 
-// ---- チャット（全員分を閲覧できる。送信や編集はできない）----
+// ---- チャット閲覧（フルアクセス必須。送信や編集はできない）----
 const CONV_COLUMNS = "id, is_group, title, is_open, last_message_at, last_preview";
 type ConvRow = {
   id: string;
@@ -558,7 +637,7 @@ async function summarize(rows: ConvRow[]) {
   });
 }
 
-admin.get("/admin/conversations", async (_req, res) => {
+admin.get("/admin/conversations", requireFullAccess, async (_req, res) => {
   const { data, error } = await sb
     .from("sc_conversations")
     .select(CONV_COLUMNS)
@@ -568,7 +647,7 @@ admin.get("/admin/conversations", async (_req, res) => {
   res.json(await summarize((data ?? []) as ConvRow[]));
 });
 
-admin.get("/admin/conversations/:id", async (req, res) => {
+admin.get("/admin/conversations/:id", requireFullAccess, async (req, res) => {
   const id = idParam(req, res);
   if (!id) return;
   const { data, error } = await sb.from("sc_conversations").select(CONV_COLUMNS).eq("id", id).maybeSingle();
@@ -581,7 +660,7 @@ admin.get("/admin/conversations/:id", async (req, res) => {
   res.json(summary);
 });
 
-admin.get("/admin/conversations/:id/messages", async (req, res) => {
+admin.get("/admin/conversations/:id/messages", requireFullAccess, async (req, res) => {
   const id = idParam(req, res);
   if (!id) return;
   const beforeRaw = typeof req.query.before === "string" ? req.query.before : null;
