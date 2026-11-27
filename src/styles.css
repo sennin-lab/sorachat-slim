@@ -2788,50 +2788,93 @@ button.profile-avatar { padding: 0; font: inherit; color: inherit; }
   .demo-site-hero { padding: 28px 0 24px; }
   .demo-site-hero h1 { font-size: 24px; }
 }
-/* ---- トーク上部のノートの帯（自分と、ノートのある友だちだけ。友だち一覧の表示とは別） ---- */
+/* ---- ノートの帯（友だちタブの上）。Instagram のノートに合わせた見た目 ---- */
+:root {
+  --ig-note-bg: #efefef;
+  --ig-note-text: #262626;
+  --ig-note-muted: #8e8e8e;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ig-note-bg: #262626;
+    --ig-note-text: #f5f5f5;
+    --ig-note-muted: #a8a8a8;
+  }
+}
+:root[data-theme="dark"] {
+  --ig-note-bg: #262626;
+  --ig-note-text: #f5f5f5;
+  --ig-note-muted: #a8a8a8;
+}
+
 .note-strip {
   flex: none;
   display: flex;
   align-items: flex-end;
-  gap: 14px;
-  padding: 10px 16px 14px;
+  gap: 12px;
+  padding: 12px 14px 6px;
   overflow-x: auto;
   scrollbar-width: none;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  background: transparent;
 }
 .note-strip::-webkit-scrollbar { display: none; }
 .note-strip-item {
   flex: none;
-  min-width: 84px;
-  max-width: 150px;
+  min-width: 76px;
+  max-width: 110px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 .note-strip-slot {
-  max-width: 100%;
-  min-height: 34px;
+  width: 100%;
   display: flex;
   justify-content: center;
   align-items: flex-end;
 }
+/* ノートの吹き出し（角丸・2行まで・下に小さな丸を2つ＝Instagram の吹き出しの尾） */
 .note-strip-bubble {
-  max-width: 150px;
-  padding: 7px 14px;
+  position: relative;
+  max-width: 100%;
+  margin: 0 0 16px;
+  padding: 8px 12px;
   border: 0;
-  border-radius: 999px;
-  background: var(--bubble-in);
-  color: var(--bubble-in-text);
+  border-radius: 18px;
+  background: var(--ig-note-bg);
+  color: var(--ig-note-text);
   font: inherit;
-  font-size: 13px;
-  line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: center;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  word-break: break-word;
   cursor: pointer;
 }
+.note-strip-bubble::before,
+.note-strip-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  border-radius: 50%;
+  background: var(--ig-note-bg);
+}
+.note-strip-bubble::before {
+  width: 9px;
+  height: 9px;
+  top: 100%;
+  margin: 2px 0 0 -4px;
+}
+.note-strip-bubble::after {
+  width: 5px;
+  height: 5px;
+  top: calc(100% + 12px);
+  margin: 0 0 0 -2px;
+}
+.note-strip-bubble.is-placeholder { color: var(--ig-note-muted); }
+.note-strip-bubble:active { opacity: 0.7; }
 .note-strip-avatar {
   padding: 0;
   border: 0;
@@ -2844,7 +2887,7 @@ button.profile-avatar { padding: 0; font: inherit; color: inherit; }
 .note-strip-name {
   max-width: 100%;
   font-size: 12px;
-  color: var(--text);
+  color: var(--ig-note-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

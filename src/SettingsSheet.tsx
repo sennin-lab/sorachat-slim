@@ -4,6 +4,7 @@ import { Icon } from "./Icon";
 import { disablePush, enablePush, testPush } from "./push";
 import { getShowUnsent, setShowUnsent } from "./prefs";
 import { getLiquidIcon, setLiquidIcon } from "./iconPrefs";
+import { getNoteStrip, setNoteStrip } from "./notePrefs";
 import { refreshLocalData, resetLocalData } from "./cache";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type { Me } from "./types";
@@ -28,6 +29,7 @@ export function SettingsSheet({
   const [preview, setPreview] = useState(me.notifyPreview);
   const [ai, setAi] = useState(me.aiEnabled);
   const [showUnsent, setShowUnsentState] = useState(getShowUnsent);
+  const [noteStrip, setNoteStripState] = useState(getNoteStrip);
   const [liquidIcon, setLiquidIconState] = useState(getLiquidIcon);
   const [status, setStatus] = useState("");
   const [testMessage, setTestMessage] = useState("");
@@ -201,7 +203,25 @@ export function SettingsSheet({
             }}
           />
         </label>
+        <label className="page-row">
+          <span className="row-label">
+            <span className="option-icon">
+              <Icon name="unsend" size={18} />
+            </span>
+            ノートを表示
+          </span>
+          <input
+            type="checkbox"
+            className="switch"
+            checked={noteStrip}
+            onChange={(e) => {
+              setNoteStrip(e.target.checked);
+              setNoteStripState(e.target.checked);
+            }}
+          />
+        </label>
       </div>
+      <p className="notice center small">ノートを表示すると、友だちタブの上にノートの吹き出しを出します。初期設定はオフです（この端末の設定です）。</p>
       <p className="notice center small">Liquid Glass アイコンをオフにすると通常アイコンに戻ります。初期設定は通常アイコンです。</p>
       <p className="notice center small">オフにすると、取り消されたメッセージはトークに表示されません（この端末の設定です）。</p>
 

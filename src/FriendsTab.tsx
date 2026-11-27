@@ -5,6 +5,7 @@ import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { NoteSheet } from "./NoteSheet";
 import { NoteStrip } from "./NoteStrip";
+import { NOTE_PREFS_EVENT, getNoteStrip } from "./notePrefs";
 import { UserRow } from "./UserRow";
 import type { Friend, Me } from "./types";
 
@@ -39,6 +40,13 @@ export function FriendsTab({
   const [reload, setReload] = useState(0);
   // 詳細を開いているノート
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
+  // ノートの帯を出すか（設定。既定はオフ）
+  const [noteOn, setNoteOn] = useState(getNoteStrip);
+  useEffect(() => {
+    const sync = () => setNoteOn(getNoteStrip());
+    window.addEventListener(NOTE_PREFS_EVENT, sync);
+    return () => window.removeEventListener(NOTE_PREFS_EVENT, sync);
+  }, []);
 
   useEffect(() => {
     api<Friend[]>("/api/friends")
@@ -114,7 +122,7 @@ export function FriendsTab({
         </label>
       </div>
 
-      <NoteStrip me={me} version={version} onOpenMe={onOpenMe} onOpenUser={onOpenUser} />
+      {noteOn && <NoteStrip me={me} version={version} onOpenMe={onOpenMe} onOpenUser={onOpenUser} />}
 
       <ul className="user-list-ul">
         <li className="user-li" style={{ "--i": 0 } as CSSProperties}>
@@ -216,7 +224,7 @@ export function FriendsTab({
               hasAvatar={f.hasAvatar}
               name={f.displayName}
               sub={f.bio || `@${f.username}`}
-              note={liveNote(f)}
+              note={noteOn ? liveNote(f) : null}
               onNoteOpen={() => {
                 const n = liveNote(f);
                 if (n) setOpenNoteId(n.id);

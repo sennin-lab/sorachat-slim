@@ -51,7 +51,12 @@ export function NoteStrip({
               <button type="button" className="note-strip-bubble" onClick={() => setOpenNoteId(selfNote.id)}>
                 {selfNote.body}
               </button>
-            ) : null}
+            ) : (
+              // ノートがないときは「メモを追加…」を出す（押すと、プロフィールのノート編集を開く）
+              <button type="button" className="note-strip-bubble is-placeholder" onClick={onOpenMe}>
+                メモを追加…
+              </button>
+            )}
           </div>
           <button type="button" className="note-strip-avatar" onClick={onOpenMe} aria-label="自分のプロフィールを開く">
             <Avatar userId={me.id} hasAvatar={me.hasAvatar} name={me.displayName} size={56} />
