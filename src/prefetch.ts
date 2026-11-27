@@ -33,7 +33,12 @@ export async function prefetchMessages(list: Conversation[], handlers: Handlers)
 
       handlers.start(c.id);
       try {
-        const fresh = await api<Message[]>(`/api/dm/${c.id}/messages`);
+        // 保存済みがあれば、その続き（新しい分）だけを取る。無ければ最新を取る
+        const newest = newestOf(stored);
+        const url = newest
+          ? `/api/dm/${c.id}/messages?after=${encodeURIComponent(newest)}`
+          : `/api/dm/${c.id}/messages`;
+        const fresh = await api<Message[]>(url);
         // 保存済みの古い分は残したまま、新しい分を足す（ID で重複を除く）
         const map = new Map<string, Message>();
         for (const m of [...stored, ...fresh]) map.set(m.id, m);

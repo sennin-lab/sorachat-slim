@@ -554,7 +554,23 @@ dm.get("/dm/:id/messages", async (req, res) => {
     res.status(400).json({ error: "日時の指定が正しくありません。" });
     return;
   }
+  // ?after=<ISO時刻> を渡すと、それより後の新しいメッセージを古い順に50件返す（手元の保存の続きだけを取る用）
+  const afterRaw = typeof req.query.after === "string" ? req.query.after : null;
+  const after = afterRaw ? new Date(afterRaw) : null;
+  if (after && Number.isNaN(after.getTime())) {
+    res.status(400).json({ error: "日時の指定が正しくありません。" });
+    return;
+  }
   let query = sb.from("sc_messages").select(COLUMNS).eq("conversation_id", id);
+  if (after) {
+    // 新しい分だけを、古い順に取る（続きが50件を超えるときは、次の回に残りを取る）
+    const { data, error } = await query.gt("created_at", after.toISOString()).order("created_at", { ascending: true }).limit(50);
+    if (error) throw error;
+    const hidden = await blockedByMe(me);
+    const rows = ((data ?? []) as MessageRow[]).filter((r) => !hidden.has(r.sender_id));
+    res.json(await withReactions(rows, me));
+    return;
+  }
   if (before) query = query.lt("created_at", before.toISOString());
   const { data, error } = await query.order("created_at", { ascending: false }).limit(50);
   if (error) throw error;
